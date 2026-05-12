@@ -113,6 +113,108 @@ Other ports are expected to adopt the same rule (tracked as follow-up
 tasks in the xrr project). Once adoption is complete, this extension
 becomes a v1 clarification rather than a Go-specific behavior.
 
+## fs Adapter (v1)
+
+The `fs` adapter records filesystem mutation operations. Reads are
+not supported — tests should pre-seed disk state via fixtures and
+use xrr only to assert on mutations.
+
+### Operations
+
+| Op         | Required fields           | Optional fields              |
+|------------|---------------------------|------------------------------|
+| `write`    | `path`, `data`            | `mode`, `flags`              |
+| `mkdir`    | `path`                    | `mode`                       |
+| `remove`   | `path`                    | `recursive`                  |
+| `rename`   | `path`, `dest`            |                              |
+| `chmod`    | `path`, `mode`            |                              |
+| `chown`    | `path`, `uid`, `gid`      |                              |
+| `symlink`  | `path` (target), `dest` (link) |                         |
+| `hardlink` | `path` (old), `dest` (new)|                              |
+| `truncate` | `path`, `size`            |                              |
+
+### Fingerprint Inputs
+
+```
+fingerprint = sha256(canonical(fields))[:8]
+```
+
+Where `fields` is a map containing `op` and normalized `path`, plus
+the following fields when present:
+
+- `data_sha256` — the full sha256 hex of `data` bytes, when `data`
+  is non-empty. **The raw bytes do NOT participate in the
+  fingerprint**, only their hash; this keeps the cassette filename
+  bounded regardless of payload size. The raw bytes still appear in
+  the `.req.yaml` payload for human inspection and exact replay.
+- `mode` — when set (presence-bearing, distinct from zero).
+- `uid`, `gid` — when set.
+- `dest` — when non-empty, after path normalization.
+- `size` — when set.
+- `flags` — when non-zero.
+- `recursive` — when true.
+
+`canonical(fields)` is JSON with keys sorted lexicographically.
+
+### Path Normalization
+
+Cassettes store paths in their **post-normalizer** form. A test
+that writes to `/var/folders/abc/T/Test123/file` records the path
+as `$TMP/file` (or whatever the normalizer rewrites it to). Replay
+loaders read paths verbatim from the cassette and never re-derive
+them — they do not need to know the original tmpdir.
+
+This is the cross-runtime contract: ts/py/rs/php ports MUST replay
+the normalized path as stored and MUST apply normalization on
+record-side when producing cassettes for cross-runtime replay.
+
+### Extension Status
+
+The fs adapter is part of v1 as of [date this lands]. Like exec's
+`cwd`, omit-on-zero rules mean adding a previously-unset field to
+a request shape invalidates existing cassettes recorded by adopters
+who didn't populate it. Adopters who change which optional fields
+they populate should expect cassette re-recording.
+
+### Request Envelope Example (fs write)
+
+```yaml
+xrr: "1"
+adapter: fs
+fingerprint: "<8hex>"
+recorded_at: "2026-05-11T12:00:00Z"
+payload:
+  op: write
+  path: "$TMP/config.yaml"
+  data: "key: value\n"
+  mode: 420
+```
+
+### Response Envelope Example (fs write, success)
+
+```yaml
+xrr: "1"
+adapter: fs
+fingerprint: "<8hex>"
+recorded_at: "2026-05-11T12:00:00Z"
+payload:
+  duration_ms: 2
+  bytes_written: 11
+```
+
+### Response Envelope Example (fs write, failure)
+
+```yaml
+xrr: "1"
+adapter: fs
+fingerprint: "<8hex>"
+recorded_at: "2026-05-11T12:00:00Z"
+error: "open $TMP/config.yaml: permission denied"
+payload:
+  duration_ms: 0
+  bytes_written: 0
+```
+
 ## Response Envelope Example (exec, success)
 
 ```yaml
