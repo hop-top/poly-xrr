@@ -1,0 +1,7 @@
+xrr: "1"
+adapter: fs
+fingerprint: "667a7680"
+recorded_at: "2026-05-11T12:00:00Z"
+payload:
+  duration_ms: 1
+  bytes_written: 13
