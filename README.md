@@ -4,7 +4,7 @@ Generic multi-channel interaction recorder/replayer with a pluggable adapter int
 
 ## What is xrr?
 
-`xrr` records and replays interactions across any channel type (exec, HTTP, gRPC, Redis, SQL).
+`xrr` records and replays interactions across any channel type (exec, HTTP, gRPC, Redis, SQL, fs).
 Cassettes are language-agnostic YAML — record in Go, replay in Python, or any other port.
 
 Three modes:
@@ -141,6 +141,59 @@ controls; no IPC, no plumbing.
   child write to the same `XRR_CASSETTE_DIR` concurrently, file
   collisions are possible. Either record from the child only, or give
   each writer its own dir.
+
+## Daemons and stateful servers
+
+xrr intercepts **calls**, not **state**. If you're testing code
+that interacts with a long-lived process, pick the pattern that
+matches your topology — xrr is the right tool for one of these
+cases and explicitly the wrong tool for the other two.
+
+### 1. Your code talks to the daemon over a wire
+
+If the daemon speaks HTTP, gRPC, Redis, or SQL, use the matching
+xrr adapter on the **client side**. The daemon stays real in
+record mode; replay never starts it. This is the default xrr
+workflow and what the existing adapters are designed for.
+
+```go
+// Record once against a real PostgreSQL.
+sess := xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette("cassettes"))
+db := xsql.WrapDB(realDB, sess)  // client-side wrapper
+
+// Replay with no PostgreSQL running.
+sess := xrr.NewSession(xrr.ModeReplay, xrr.NewFileCassette("cassettes"))
+db := xsql.WrapDB(nil, sess)  // inner DB never called
+```
+
+### 2. The daemon is in-process
+
+If your code interacts with a `*http.Server`, custom event bus,
+or any type that holds state across calls inside the same
+process — xrr is the wrong tool. Use a hand-written fake behind
+an interface.
+
+xrr's cassette model has no notion of "the daemon is now in state
+X after the third call". Cassettes are keyed by request fingerprint
+and replay in any order; sequence-dependent in-process state can't
+be expressed in that model. A 30-line fake with a `map[string]Thing`
+is the right primitive.
+
+### 3. You need to assert on the daemon's internal state
+
+If your test asserts on the daemon's internal counters, queue depth,
+elected leader, or any in-memory state observed across calls —
+that's a state-machine assertion, not a call-replay assertion. xrr
+cassettes can't represent "and now the leader changed".
+
+Instrument the type with a `Snapshot()` method (or expose enough
+hooks to inspect what you need) and assert on snapshots directly.
+xrr can sit alongside this approach to handle any I/O the daemon
+performs, but the state assertions stay outside the cassette.
+
+> **TL;DR:** xrr is a calls-at-a-boundary tool. If the boundary
+> disappears (in-process) or the test asserts on state across the
+> boundary, you have a different problem.
 
 ## Cassette Format
 
