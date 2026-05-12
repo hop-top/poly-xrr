@@ -13,3 +13,5 @@ export { RedisAdapter } from "./adapters/redis.js";
 export type { RedisRequest, RedisResponse } from "./adapters/redis.js";
 export { SqlAdapter } from "./adapters/sql.js";
 export type { SqlRequest, SqlResponse } from "./adapters/sql.js";
+export { FsAdapter } from "./adapters/fs.js";
+export type { FsOp, FsRequest, FsResponse } from "./adapters/fs.js";
