@@ -8,6 +8,10 @@
 package fs
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+
 	"gopkg.in/yaml.v3"
 	xrr "hop.top/xrr"
 )
@@ -102,10 +106,61 @@ func (a *Adapter) normalize(p string) string {
 // ID returns the adapter id.
 func (a *Adapter) ID() string { return "fs" }
 
-// Fingerprint, Serialize, Deserialize are implemented in
-// subsequent tasks.
+// Fingerprint returns sha256(canonical JSON of selected fields)[:8].
+//
+// Field selection rules:
+//   - op and path are always included; path is path-normalized.
+//   - data is hashed (full sha256 hex) and included as data_sha256
+//     when non-empty. Raw bytes are NOT in the fingerprint — keeps
+//     the 8-char filename suffix bounded for any payload size.
+//   - Mode/UID/GID/Size pointers are included iff non-nil.
+//   - dest is included iff non-empty (path-normalized).
+//   - flags is included iff non-zero.
+//   - recursive is included iff true.
+//
+// Go's encoding/json sorts map keys lexicographically on marshal, so
+// the same field set always serializes to the same bytes. Other-
+// language ports MUST sort keys identically.
 func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
-	panic("not implemented")
+	r, ok := req.(*Request)
+	if !ok {
+		return "", fmt.Errorf("fs: unexpected request type %T", req)
+	}
+	fields := map[string]any{
+		"op":   r.Op,
+		"path": a.normalize(r.Path),
+	}
+	if len(r.Data) > 0 {
+		sum := sha256.Sum256(r.Data)
+		fields["data_sha256"] = fmt.Sprintf("%x", sum)
+	}
+	if r.Mode != nil {
+		fields["mode"] = *r.Mode
+	}
+	if r.UID != nil {
+		fields["uid"] = *r.UID
+	}
+	if r.GID != nil {
+		fields["gid"] = *r.GID
+	}
+	if r.Dest != "" {
+		fields["dest"] = a.normalize(r.Dest)
+	}
+	if r.Size != nil {
+		fields["size"] = *r.Size
+	}
+	if r.Flags != 0 {
+		fields["flags"] = r.Flags
+	}
+	if r.Recursive {
+		fields["recursive"] = true
+	}
+	canonical, err := json.Marshal(fields)
+	if err != nil {
+		return "", fmt.Errorf("fs: fingerprint marshal: %w", err)
+	}
+	sum := sha256.Sum256(canonical)
+	return fmt.Sprintf("%x", sum[:4]), nil
 }
 
 // Serialize marshals v as YAML.
