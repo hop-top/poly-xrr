@@ -57,10 +57,19 @@ class FsAdapter:
     def with_normalizer(self, normalizer) -> "FsAdapter":
         return FsAdapter(normalizer=normalizer)
 
-    def _normalize(self, p: str) -> str:
+    def normalize(self, p: str) -> str:
+        """Public path-normalization hook. Wrappers or higher-level
+        code may call this when building an FsRequest so the path
+        stored on the cassette envelope agrees with what fingerprint
+        hashes. Empty input short-circuits.
+        """
         if not p:
             return ""
         return self._normalizer(p)
+
+    # Backwards-compatible private alias used inside this class.
+    def _normalize(self, p: str) -> str:
+        return self.normalize(p)
 
     def fingerprint(self, req: FsRequest) -> str:
         fields: dict[str, Any] = {
@@ -89,7 +98,13 @@ class FsAdapter:
         return hashlib.sha256(canonical.encode()).hexdigest()[:8]
 
     def serialize_req(self, req: FsRequest) -> dict[str, Any]:
-        out: dict[str, Any] = {"op": req.op, "path": req.path}
+        # Apply path normalization here so the persisted cassette
+        # payload agrees with the fingerprint inputs — per the spec
+        # contract "cassettes store post-normalizer paths". Without
+        # this, fingerprint() would hash $TMP/foo while the YAML
+        # payload would carry /var/folders/xy/.../foo, breaking
+        # cross-runtime replay.
+        out: dict[str, Any] = {"op": req.op, "path": self.normalize(req.path)}
         if req.data:
             out["data"] = req.data
         if req.mode is not None:
@@ -99,7 +114,7 @@ class FsAdapter:
         if req.gid is not None:
             out["gid"] = req.gid
         if req.dest:
-            out["dest"] = req.dest
+            out["dest"] = self.normalize(req.dest)
         if req.size is not None:
             out["size"] = req.size
         if req.flags != 0:

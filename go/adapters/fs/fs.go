@@ -70,10 +70,16 @@ type Response struct {
 
 func (r *Response) AdapterID() string { return "fs" }
 
-// PathNormalizer rewrites a path before it enters the fingerprint
-// or the cassette envelope. Default is identity. Returning ""
-// is allowed (treated literally — adopters can drop path info
-// if they really want to).
+// PathNormalizer rewrites a path before it enters the fingerprint.
+// Default is identity. Returning "" is allowed (treated literally —
+// adopters can drop path info if they really want to).
+//
+// To honor the spec's "cassettes store post-normalizer paths"
+// contract, WRAPPERS must apply the normalizer to Request.Path and
+// Request.Dest BEFORE constructing the Request — the adapter's
+// Serialize method receives the Request verbatim and persists
+// whatever it is given. Call Adapter.Normalize for the canonical
+// rewrite at the call site.
 type PathNormalizer func(string) string
 
 // Adapter implements xrr.Adapter for fs mutations.
@@ -104,12 +110,25 @@ func Chain(norms ...PathNormalizer) PathNormalizer {
 	}
 }
 
-func (a *Adapter) normalize(p string) string {
+// Normalize applies the installed PathNormalizer to p. Wrappers
+// call this when building Request.Path / Request.Dest so the
+// values stored on the cassette envelope agree with what the
+// fingerprint hashes.
+//
+// Empty input short-circuits and returns "" without invoking the
+// normalizer — adopters can pass paths through unconditionally
+// without guarding for the optional-Dest case.
+func (a *Adapter) Normalize(p string) string {
 	if p == "" {
 		return ""
 	}
 	return a.normalizer(p)
 }
+
+// normalize is the unexported internal entry point still used by
+// Fingerprint. Kept as a thin alias so the call sites inside
+// Fingerprint don't need rewriting.
+func (a *Adapter) normalize(p string) string { return a.Normalize(p) }
 
 // ID returns the adapter id.
 func (a *Adapter) ID() string { return "fs" }

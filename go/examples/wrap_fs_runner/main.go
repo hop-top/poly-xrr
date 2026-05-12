@@ -89,6 +89,12 @@ func (w *Wrapper) record(ctx context.Context, req *xfs.Request, do func() error)
 	return err
 }
 
+// np applies the adapter's PathNormalizer at request construction
+// time so that Request.Path / Request.Dest stored on the cassette
+// envelope match what Fingerprint hashes (per the spec's
+// "cassettes store post-normalizer paths" contract).
+func (w *Wrapper) np(p string) string { return w.adapter.Normalize(p) }
+
 // WriteFile records or replays a file write.
 //
 // Data is converted from []byte → string here. The cassette format
@@ -97,7 +103,7 @@ func (w *Wrapper) record(ctx context.Context, req *xfs.Request, do func() error)
 // "Data Field Encoding").
 func (w *Wrapper) WriteFile(ctx context.Context, path string, data []byte, mode os.FileMode) error {
 	m := uint32(mode)
-	req := &xfs.Request{Op: xfs.OpWrite, Path: path, Data: string(data), Mode: &m}
+	req := &xfs.Request{Op: xfs.OpWrite, Path: w.np(path), Data: string(data), Mode: &m}
 	return w.record(ctx, req, func() error {
 		return w.inner.WriteFile(ctx, path, data, mode)
 	})
@@ -105,48 +111,48 @@ func (w *Wrapper) WriteFile(ctx context.Context, path string, data []byte, mode 
 
 func (w *Wrapper) Mkdir(ctx context.Context, path string, mode os.FileMode) error {
 	m := uint32(mode)
-	req := &xfs.Request{Op: xfs.OpMkdir, Path: path, Mode: &m}
+	req := &xfs.Request{Op: xfs.OpMkdir, Path: w.np(path), Mode: &m}
 	return w.record(ctx, req, func() error { return w.inner.Mkdir(ctx, path, mode) })
 }
 
 func (w *Wrapper) Remove(ctx context.Context, path string) error {
-	req := &xfs.Request{Op: xfs.OpRemove, Path: path}
+	req := &xfs.Request{Op: xfs.OpRemove, Path: w.np(path)}
 	return w.record(ctx, req, func() error { return w.inner.Remove(ctx, path) })
 }
 
 func (w *Wrapper) RemoveAll(ctx context.Context, path string) error {
-	req := &xfs.Request{Op: xfs.OpRemove, Path: path, Recursive: true}
+	req := &xfs.Request{Op: xfs.OpRemove, Path: w.np(path), Recursive: true}
 	return w.record(ctx, req, func() error { return w.inner.RemoveAll(ctx, path) })
 }
 
 func (w *Wrapper) Rename(ctx context.Context, oldpath, newpath string) error {
-	req := &xfs.Request{Op: xfs.OpRename, Path: oldpath, Dest: newpath}
+	req := &xfs.Request{Op: xfs.OpRename, Path: w.np(oldpath), Dest: w.np(newpath)}
 	return w.record(ctx, req, func() error { return w.inner.Rename(ctx, oldpath, newpath) })
 }
 
 func (w *Wrapper) Chmod(ctx context.Context, path string, mode os.FileMode) error {
 	m := uint32(mode)
-	req := &xfs.Request{Op: xfs.OpChmod, Path: path, Mode: &m}
+	req := &xfs.Request{Op: xfs.OpChmod, Path: w.np(path), Mode: &m}
 	return w.record(ctx, req, func() error { return w.inner.Chmod(ctx, path, mode) })
 }
 
 func (w *Wrapper) Chown(ctx context.Context, path string, uid, gid int) error {
-	req := &xfs.Request{Op: xfs.OpChown, Path: path, UID: &uid, GID: &gid}
+	req := &xfs.Request{Op: xfs.OpChown, Path: w.np(path), UID: &uid, GID: &gid}
 	return w.record(ctx, req, func() error { return w.inner.Chown(ctx, path, uid, gid) })
 }
 
 func (w *Wrapper) Symlink(ctx context.Context, target, link string) error {
-	req := &xfs.Request{Op: xfs.OpSymlink, Path: target, Dest: link}
+	req := &xfs.Request{Op: xfs.OpSymlink, Path: w.np(target), Dest: w.np(link)}
 	return w.record(ctx, req, func() error { return w.inner.Symlink(ctx, target, link) })
 }
 
 func (w *Wrapper) Link(ctx context.Context, oldpath, newpath string) error {
-	req := &xfs.Request{Op: xfs.OpHardlink, Path: oldpath, Dest: newpath}
+	req := &xfs.Request{Op: xfs.OpHardlink, Path: w.np(oldpath), Dest: w.np(newpath)}
 	return w.record(ctx, req, func() error { return w.inner.Link(ctx, oldpath, newpath) })
 }
 
 func (w *Wrapper) Truncate(ctx context.Context, path string, size int64) error {
-	req := &xfs.Request{Op: xfs.OpTruncate, Path: path, Size: &size}
+	req := &xfs.Request{Op: xfs.OpTruncate, Path: w.np(path), Size: &size}
 	return w.record(ctx, req, func() error { return w.inner.Truncate(ctx, path, size) })
 }
 

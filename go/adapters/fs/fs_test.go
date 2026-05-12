@@ -227,3 +227,46 @@ func TestSerializeResponseRoundtrip(t *testing.T) {
 	assert.Equal(t, resp.DurationMs, got.DurationMs)
 	assert.Equal(t, resp.BytesWritten, got.BytesWritten)
 }
+
+// TestNormalizeIsPublicAndIdempotent — wrappers call Adapter.Normalize
+// when building Request.Path / Request.Dest so the persisted
+// cassette payload agrees with what Fingerprint hashes. Regression
+// test for the spec contract "cassettes store post-normalizer paths"
+// (without this, Fingerprint normalizes but Serialize persists raw).
+func TestNormalizeIsPublicAndIdempotent(t *testing.T) {
+	a := fs.NewAdapter().WithNormalizer(func(p string) string {
+		return strings.Replace(p, "/tmp/run-123", "$TMP", 1)
+	})
+
+	// Public API: wrappers can call Normalize at request construction.
+	assert.Equal(t, "$TMP/x", a.Normalize("/tmp/run-123/x"))
+	assert.Equal(t, "$TMP/x", a.Normalize("$TMP/x"),
+		"normalizing an already-normalized path is a no-op for this rule")
+	assert.Equal(t, "", a.Normalize(""),
+		"empty path short-circuits without invoking the normalizer")
+}
+
+// TestSerializeStoresPostNormalizerPath — when a wrapper has
+// pre-normalized Path/Dest before constructing the Request, the
+// YAML payload written to disk MUST contain the normalized form.
+// This is the contract cross-runtime replay relies on.
+func TestSerializeStoresPostNormalizerPath(t *testing.T) {
+	a := fs.NewAdapter().WithNormalizer(func(p string) string {
+		return strings.Replace(p, "/tmp/run-123", "$TMP", 1)
+	})
+
+	// Wrappers MUST do this normalization at construction time.
+	req := &fs.Request{
+		Op:   fs.OpRename,
+		Path: a.Normalize("/tmp/run-123/old"),
+		Dest: a.Normalize("/tmp/run-123/new"),
+	}
+
+	data, err := a.Serialize(req)
+	require.NoError(t, err)
+	out := string(data)
+	assert.Contains(t, out, "path: $TMP/old")
+	assert.Contains(t, out, "dest: $TMP/new")
+	assert.NotContains(t, out, "/tmp/run-123",
+		"serialized payload must not leak the raw tmpdir path")
+}

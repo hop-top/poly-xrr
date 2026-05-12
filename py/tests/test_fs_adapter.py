@@ -170,3 +170,25 @@ def test_serialize_base64_payload_roundtrip():
     got = a.deserialize_req(a.serialize_req(req))
     assert got.data == encoded
     assert base64.b64decode(got.data) == raw
+
+
+def test_serialize_req_applies_normalizer_to_path_and_dest():
+    """Regression: cassette payload must store post-normalizer paths
+    so cross-runtime replay reads the same path the fingerprint
+    hashed. Without this, fingerprint sees $TMP/foo and the YAML
+    payload would carry the raw tmpdir-specific path.
+    """
+    a = FsAdapter().with_normalizer(
+        lambda p: p.replace("/tmp/run-123", "$TMP", 1)
+    )
+    req = FsRequest(
+        op="rename",
+        path="/tmp/run-123/old",
+        dest="/tmp/run-123/new",
+    )
+    out = a.serialize_req(req)
+    assert out["path"] == "$TMP/old", "serialized path must be normalized"
+    assert out["dest"] == "$TMP/new", "serialized dest must be normalized"
+    # And the public normalize entry point exists for wrapper-side use.
+    assert a.normalize("/tmp/run-123/x") == "$TMP/x"
+    assert a.normalize("") == ""
