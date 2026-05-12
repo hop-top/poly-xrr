@@ -288,7 +288,7 @@ In `go/adapters/fs/fs_test.go`:
    verify both the fingerprint AND the envelope path are rewritten.
 4. **TestFSAdapterBinaryPayload** — non-UTF8 `Data` round-trips
    through YAML `!!binary` cleanly.
-5. **Conformance fixture** at `spec/fixtures/fs/write-basic/` —
+5. **Conformance fixture** at `spec/fixtures/fs-write/` —
    one recorded interaction, picked up by `TestConformanceFixtures`
    (`go/conformance_test.go:24`). Locks the cross-runtime contract.
 
@@ -376,7 +376,7 @@ no port lands without it.
 ## Acceptance Criteria
 
 - `go/adapters/fs/` package builds, all tests pass.
-- `spec/fixtures/fs/write-basic/` exists and is loaded by
+- `spec/fixtures/fs-write/` exists and is loaded by
   `TestConformanceFixtures`.
 - `go/examples/wrap_fs_runner/main.go` builds and demonstrates
   the canonical adoption pattern.
