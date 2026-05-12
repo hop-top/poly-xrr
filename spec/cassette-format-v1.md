@@ -142,11 +142,12 @@ fingerprint = sha256(canonical(fields))[:8]
 Where `fields` is a map containing `op` and normalized `path`, plus
 the following fields when present:
 
-- `data_sha256` — the full sha256 hex of `data` bytes, when `data`
-  is non-empty. **The raw bytes do NOT participate in the
-  fingerprint**, only their hash; this keeps the cassette filename
-  bounded regardless of payload size. The raw bytes still appear in
-  the `.req.yaml` payload for human inspection and exact replay.
+- `data_sha256` — the full sha256 hex of the `data` field's UTF-8
+  bytes, when `data` is non-empty. **The raw bytes do NOT participate
+  in the fingerprint**, only their hash; this keeps the cassette
+  filename bounded regardless of payload size. The raw string still
+  appears in the `.req.yaml` payload for human inspection and exact
+  replay.
 - `mode` — when set (presence-bearing, distinct from zero).
 - `uid`, `gid` — when set.
 - `dest` — when non-empty, after path normalization.
@@ -167,6 +168,26 @@ them — they do not need to know the original tmpdir.
 This is the cross-runtime contract: ts/py/rs/php ports MUST replay
 the normalized path as stored and MUST apply normalization on
 record-side when producing cassettes for cross-runtime replay.
+
+### Data Field Encoding
+
+The `data` field on `write` requests is a **UTF-8 string**, not a
+raw byte sequence. This keeps cassettes human-diffable for the
+overwhelmingly common text payload case (config files, JSON, SQL,
+generated source) — `data: "key: value\n"` renders as itself in
+YAML across every language port.
+
+**Binary payloads:** if the underlying call writes non-UTF-8 bytes
+(images, compiled artifacts), the caller MUST base64-encode the
+bytes BEFORE passing them to the wrapper, and base64-decode on
+read. The cassette records the base64 string verbatim. xrr does
+NOT auto-detect or auto-encode binary data — this keeps the
+cross-runtime contract simple (every YAML library handles strings
+identically; binary tag handling varies between libraries).
+
+The fingerprint hashes the UTF-8 bytes of the `data` string. The
+hash is the same whether the string contains text or base64-encoded
+binary — the field is opaque from the fingerprint's perspective.
 
 ### Extension Status
 
