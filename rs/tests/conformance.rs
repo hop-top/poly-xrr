@@ -1,7 +1,11 @@
 use std::path::Path;
 
 use serde::Deserialize;
-use xrr::{FileCassette, adapters::exec::{ExecRequest, ExecResponse}};
+use xrr::{
+    adapters::exec::{ExecRequest, ExecResponse},
+    adapters::fs::{FsRequest, FsResponse},
+    FileCassette,
+};
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -53,6 +57,17 @@ fn test_conformance_fixtures() {
             match interaction.adapter.as_str() {
                 "exec" => {
                     let result: Result<(ExecRequest, ExecResponse), _> =
+                        cassette.load(&interaction.adapter, &interaction.fingerprint);
+                    assert!(
+                        result.is_ok(),
+                        "failed to load {}/{}: {:?}",
+                        fixture_dir.display(),
+                        interaction.fingerprint,
+                        result.err()
+                    );
+                }
+                "fs" => {
+                    let result: Result<(FsRequest, FsResponse), _> =
                         cassette.load(&interaction.adapter, &interaction.fingerprint);
                     assert!(
                         result.is_ok(),
