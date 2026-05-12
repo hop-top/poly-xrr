@@ -47,9 +47,13 @@ stop trying to fit daemon state into xrr's call-replay model.
 - **Daemon adapter.** xrr's call-keyed cassette model cannot
   represent "the daemon is in state X after the third call".
   Documented alternatives instead.
-- **ts/py/rs/php ports of `fs`.** Each port is its own follow-up
-  branch after the Go side and conformance fixture land. See
-  "Follow-on work" below.
+- ~~**ts/py/rs/php ports of `fs`.** Each port is its own follow-up
+  branch after the Go side and conformance fixture land.~~ Scope
+  changed mid-stream: the original design phased the four ports as
+  follow-on branches, but on review we chose to bundle all five
+  ports in a single PR so the cross-runtime contract lands atomically
+  with one conformance fixture. Final scope includes Go + ts + py +
+  rs + php in this branch.
 
 ## Adapter Design
 
@@ -64,12 +68,12 @@ cross-runtime port).
 
 type Request struct {
     Op        string  `yaml:"op"`                  // see "Operations" below
-    Path      string  `yaml:"path"`                // normalized
-    Data      []byte  `yaml:"data,omitempty"`      // write only
+    Path      string  `yaml:"path"`                // post-normalizer form
+    Data      string  `yaml:"data,omitempty"`      // write only — UTF-8 string
     Mode      *uint32 `yaml:"mode,omitempty"`      // write, mkdir, chmod
     UID       *int    `yaml:"uid,omitempty"`       // chown
     GID       *int    `yaml:"gid,omitempty"`       // chown
-    Dest      string  `yaml:"dest,omitempty"`      // rename, symlink, hardlink (normalized)
+    Dest      string  `yaml:"dest,omitempty"`      // rename, symlink, hardlink (post-normalizer)
     Size      *int64  `yaml:"size,omitempty"`      // truncate
     Flags     uint32  `yaml:"flags,omitempty"`     // write: O_TRUNC / O_APPEND / O_EXCL bits
     Recursive bool    `yaml:"recursive,omitempty"` // remove: RemoveAll vs Remove
@@ -81,6 +85,14 @@ func (r *Request) AdapterID() string { return "fs" }
 Pointer types for `Mode`, `UID`, `GID`, `Size` distinguish "field
 unset" from "field set to zero". The fingerprint omits unset fields
 (see "Fingerprint algorithm" below).
+
+**Note on the `Data` field:** earlier drafts of this design used
+`Data []byte`. That broke cross-runtime portability — yaml.v3
+serializes `[]byte` as a sequence of decimal ints (`[104, 101, ...]`),
+not `!!binary`, and the other ports' YAML libraries disagree on
+binary tag handling. The final contract is `Data string` (UTF-8);
+binary callers base64-encode at the call site. See
+`spec/cassette-format-v1.md` "Data Field Encoding".
 
 ### Response shape
 
@@ -282,12 +294,13 @@ In `go/adapters/fs/fs_test.go`:
    omit-when-zero rule: `Mode: nil` and `Mode: ptr(0)` produce
    different fingerprints (one omits `mode`, the other includes
    `mode: 0`).
-2. **TestFSAdapterRoundtrip** — serialize a Request with binary
-   `Data`, deserialize, byte-equal.
+2. **TestFSAdapterRoundtrip** — serialize a Request with a UTF-8
+   `Data` string, deserialize, equal.
 3. **TestFSAdapterNormalizerApplied** — install a normalizer,
    verify both the fingerprint AND the envelope path are rewritten.
-4. **TestFSAdapterBinaryPayload** — non-UTF8 `Data` round-trips
-   through YAML `!!binary` cleanly.
+4. **TestSerializeBase64Payload** — binary callers base64-encode
+   before passing `Data`; the adapter treats it as an opaque string
+   and round-trips it exactly. Caller decodes back to bytes.
 5. **Conformance fixture** at `spec/fixtures/fs-write/` —
    one recorded interaction, picked up by `TestConformanceFixtures`
    (`go/conformance_test.go:24`). Locks the cross-runtime contract.

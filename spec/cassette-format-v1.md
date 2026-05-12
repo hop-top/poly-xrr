@@ -191,7 +191,7 @@ binary — the field is opaque from the fingerprint's perspective.
 
 ### Extension Status
 
-The fs adapter is part of v1 as of [date this lands]. Like exec's
+The fs adapter is part of v1 as of 2026-05-11. Like exec's
 `cwd`, omit-on-zero rules mean adding a previously-unset field to
 a request shape invalidates existing cassettes recorded by adopters
 who didn't populate it. Adopters who change which optional fields

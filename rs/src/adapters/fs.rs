@@ -90,7 +90,8 @@ impl Adapter for FsAdapter {
         "fs"
     }
 
-    /// Returns sha256(canonical JSON of selected fields)[:4] as hex.
+    /// Returns sha256(canonical JSON of selected fields) — first 4
+    /// bytes encoded as 8 hex chars.
     ///
     /// Field selection (must match Go fs adapter exactly):
     ///   - `op` and `path` always included.

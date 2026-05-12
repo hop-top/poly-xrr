@@ -1,5 +1,14 @@
 # fs Adapter Implementation Plan
 
+> ⚠️ **Historical artifact.** This plan was written before two contract
+> changes that landed during implementation. Code snippets below
+> showing `Data []byte` are SUPERSEDED — the final wire-format is
+> `Data string` (UTF-8); binary callers base64-encode at the call
+> site. See `spec/cassette-format-v1.md` "Data Field Encoding" for
+> the authoritative contract. The scope also expanded from "Go only,
+> ports as follow-on" to "all five ports in this PR" — see the
+> design doc's Non-Goals section.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a new `fs` adapter to xrr's Go port supporting nine filesystem mutation operations (write, mkdir, remove, rename, chmod, chown, symlink, hardlink, truncate), with pluggable path normalization and inline binary payloads, plus README documentation for the three daemon use-case patterns.
