@@ -1,6 +1,6 @@
 [project]
 name = "xrr"
-version = "0.1.0"
+version = "0.1.0-alpha.3"
 description = "Multi-channel interaction recorder/replayer"
 readme = "README.md"
 requires-python = ">=3.12"
