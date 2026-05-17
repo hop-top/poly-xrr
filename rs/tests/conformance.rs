@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use serde::Deserialize;
-use xrr::{
+use hop_top_xrr::{
     adapters::exec::{ExecRequest, ExecResponse},
     adapters::fs::{FsRequest, FsResponse},
     FileCassette,

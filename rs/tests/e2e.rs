@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use tempfile::TempDir;
-use xrr::{
+use hop_top_xrr::{
     Adapter, FileCassette, Mode, Session, XrrError,
     adapters::{
         exec::{ExecAdapter, ExecRequest, ExecResponse},
