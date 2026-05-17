@@ -1,7 +1,7 @@
 # xrr — Rust SDK
 
-> Auto-published from [xrr-poly](https://github.com/hop-top/xrr-poly).
-> Do not open issues or PRs here — contribute to xrr-poly instead.
+> Auto-published from [poly-xrr](https://github.com/hop-top/poly-xrr).
+> Do not open issues or PRs here — contribute to poly-xrr instead.
 
 ## Install
 

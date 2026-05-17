@@ -1,0 +1,73 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "separate-pull-requests": true,
+  "pull-request-title-pattern": "chore(release):${component} ${version}",
+  "include-component-in-tag": true,
+  "tag-separator": "/",
+  "changelog-sections": [
+    {"type": "feat", "section": "Features"},
+    {"type": "fix", "section": "Bug Fixes"},
+    {"type": "perf", "section": "Performance"},
+    {"type": "refactor", "section": "Refactoring"},
+    {"type": "chore", "section": "Miscellaneous", "hidden": true},
+    {"type": "docs", "section": "Documentation", "hidden": true},
+    {"type": "test", "section": "Tests", "hidden": true},
+    {"type": "ci", "section": "CI", "hidden": true},
+    {"type": "build", "section": "Build", "hidden": true}
+  ],
+  "packages": {
+    "go": {
+      "release-type": "go",
+      "component": "xrr",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "prerelease": true,
+      "prerelease-type": "alpha.0",
+      "versioning": "prerelease"
+    },
+    "ts": {
+      "release-type": "node",
+      "component": "xrr-ts",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "prerelease": true,
+      "prerelease-type": "alpha.0",
+      "versioning": "prerelease"
+    },
+    "py": {
+      "release-type": "python",
+      "component": "xrr-py",
+      "package-name": "hop-top-xrr",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        }
+      ],
+      "prerelease": true,
+      "prerelease-type": "alpha.0",
+      "versioning": "prerelease"
+    },
+    "rs": {
+      "release-type": "rust",
+      "component": "xrr-rs",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "prerelease": true,
+      "prerelease-type": "alpha.0",
+      "versioning": "prerelease"
+    },
+    "php": {
+      "release-type": "php",
+      "component": "xrr-php",
+      "changelog-path": "CHANGELOG.md",
+      "bump-minor-pre-major": true,
+      "prerelease": true,
+      "prerelease-type": "alpha.0",
+      "versioning": "prerelease"
+    }
+  }
+}
