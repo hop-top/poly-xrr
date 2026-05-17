@@ -1,5 +1,5 @@
 [project]
-name = "xrr"
+name = "hop-top-xrr"
 version = "0.1.0-alpha.3"
 description = "Multi-channel interaction recorder/replayer"
 readme = "README.md"
