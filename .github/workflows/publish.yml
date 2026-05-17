@@ -24,7 +24,7 @@ jobs:
           ecosystem: ts
           package: "@hop-top/xrr"
           mirror: hop-top/xrr-ts
-          test-command: pnpm dlx --config.ignore-scripts=true vitest@3 run
+          test-command: pnpm install --frozen-lockfile --ignore-scripts && pnpm test
           build-command: pnpm ci:build
         xrr-py:
           dir: py
