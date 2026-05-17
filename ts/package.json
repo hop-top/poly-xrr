@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "scripts": {
     "test": "vitest run",
-    "lint": "eslint src tests"
+    "lint": "eslint src tests",
+    "ci:build": "tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
