@@ -1,0 +1,49 @@
+name: publish
+
+on:
+  push:
+    tags: ['*/v*']
+
+jobs:
+  publish:
+    permissions:
+      contents: read
+      id-token: write
+    uses: hop-top/.github/.github/workflows/publish-on-tag.yml@v0
+    secrets:
+      NPM_REGISTRY_TOKEN:   ${{ secrets.NPM_REGISTRY_TOKEN }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      PYPI_REGISTRY_TOKEN:  ${{ secrets.PYPI_REGISTRY_TOKEN }}
+      GH_MIRROR_PAT:        ${{ secrets.GH_MIRROR_PAT }}
+    with:
+      homepage: https://hop.top/xrr
+      description-prefix: "READ-ONLY MIRROR"
+      ecosystems: |
+        xrr-ts:
+          dir: ts
+          ecosystem: ts
+          package: "@hop-top/xrr"
+          mirror: hop-top/xrr-ts
+          test-command: pnpm dlx --config.ignore-scripts=true vitest@3 run
+          build-command: pnpm ci:build
+        xrr-py:
+          dir: py
+          ecosystem: py
+          package: hop-top-xrr
+          mirror: hop-top/xrr-py
+          pypi-auth: token
+          test-command: pip install -e . && pytest
+        xrr-rs:
+          dir: rs
+          ecosystem: rs
+          package: hop-top-xrr
+          mirror: hop-top/xrr-rs
+        xrr-php:
+          dir: php
+          ecosystem: php
+          package: hop-top/xrr
+          mirror: hop-top/xrr-php
+        xrr:
+          dir: go
+          ecosystem: go
+          mirror: hop-top/xrr
