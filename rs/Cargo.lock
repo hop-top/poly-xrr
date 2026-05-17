@@ -194,6 +194,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
+name = "hop-top-xrr"
+version = "0.1.0-alpha.4"
+dependencies = [
+ "chrono",
+ "hex",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -759,20 +773,6 @@ dependencies = [
  "serde_json",
  "unicode-xid",
  "wasmparser",
-]
-
-[[package]]
-name = "xrr"
-version = "0.1.0-alpha.4"
-dependencies = [
- "chrono",
- "hex",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "tempfile",
- "thiserror",
 ]
 
 [[package]]

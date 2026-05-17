@@ -1,8 +1,11 @@
 [package]
-name = "xrr"
+name = "hop-top-xrr"
 version = "0.1.0-alpha.4"
 edition = "2021"
 license = "MIT"
+description = "Multi-channel interaction recorder/replayer"
+homepage = "https://hop.top/xrr"
+repository = "https://github.com/hop-top/poly-xrr"
 readme = "README.md"
 include = [
     "src/**/*",
