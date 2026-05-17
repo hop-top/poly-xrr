@@ -1,6 +1,6 @@
 {
   "name": "@hop-top/xrr",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "type": "module",
   "description": "Multi-channel interaction recorder/replayer",
   "main": "./src/index.ts",
