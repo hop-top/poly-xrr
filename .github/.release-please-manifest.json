@@ -1,7 +1,7 @@
 {
-  "go":  "0.1.0-alpha.3",
-  "ts":  "0.1.0-alpha.3",
-  "py":  "0.1.0-alpha.3",
-  "rs":  "0.1.0-alpha.3",
+  "go": "0.1.0-alpha.4",
+  "ts": "0.1.0-alpha.3",
+  "py": "0.1.0-alpha.3",
+  "rs": "0.1.0-alpha.3",
   "php": "0.1.0-alpha.3"
 }
