@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-alpha.6](https://github.com/hop-top/poly-xrr/compare/xrr-rs/v0.1.0-alpha.5...xrr-rs/v0.1.0-alpha.6) (2026-05-17)
+
+
+### Bug Fixes
+
+* **rs/tests:** update use xrr -&gt; use hop_top_xrr after crate rename ([75af67e](https://github.com/hop-top/poly-xrr/commit/75af67ecac48651f1a5aa7ae7a1961b1c222c3ec))
+
 ## [0.1.0-alpha.5](https://github.com/hop-top/poly-xrr/compare/xrr-rs/v0.1.0-alpha.4...xrr-rs/v0.1.0-alpha.5) (2026-05-17)
 
 
