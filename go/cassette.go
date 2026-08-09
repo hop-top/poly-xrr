@@ -26,11 +26,35 @@ type envelope struct {
 // FileCassette stores interactions as YAML files in a directory.
 type FileCassette struct {
 	dir string
+	// redactor scrubs credential-bearing fields before serialization.
+	// Nil means "resolve from the environment at write time", which is
+	// what NewFileCassette installs so redaction is on by default.
+	redactor *Redactor
 }
 
 // NewFileCassette creates a FileCassette that reads/writes to dir.
+//
+// Redaction is enabled by default, configured from the XRR_REDACT_*
+// environment variables. Use NewFileCassetteWithRedactor to supply an
+// explicit policy.
 func NewFileCassette(dir string) *FileCassette {
 	return &FileCassette{dir: dir}
+}
+
+// NewFileCassetteWithRedactor creates a FileCassette with an explicit
+// redaction policy, bypassing the XRR_REDACT_* environment variables.
+func NewFileCassetteWithRedactor(dir string, r *Redactor) *FileCassette {
+	return &FileCassette{dir: dir, redactor: r}
+}
+
+// activeRedactor resolves the redactor to use for one write. When none
+// was injected, config is read from the environment on each write so a
+// test that flips XRR_REDACT_* mid-process sees the change.
+func (c *FileCassette) activeRedactor() *Redactor {
+	if c.redactor != nil {
+		return c.redactor
+	}
+	return NewRedactor(RedactConfigFromEnv())
 }
 
 // Save writes req and resp as two YAML files under dir.
@@ -76,7 +100,17 @@ func (c *FileCassette) write(adapterID, fingerprint, kind, recordedAt, recordedE
 		Error:       recordedErr,
 		Payload:     payload,
 	}
-	data, err := yaml.Marshal(env)
+	// Encode to a node tree first so redaction can walk the generic
+	// structure without knowing any adapter's concrete types. The
+	// scrubbed tree is what gets marshalled — a secret never reaches
+	// the byte slice, let alone the file.
+	var node yaml.Node
+	if err := node.Encode(env); err != nil {
+		return fmt.Errorf("xrr: encode %s: %w", kind, err)
+	}
+	redactNode(&node, c.activeRedactor(), "")
+
+	data, err := yaml.Marshal(&node)
 	if err != nil {
 		return fmt.Errorf("xrr: marshal %s: %w", kind, err)
 	}
