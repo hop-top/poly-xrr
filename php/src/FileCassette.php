@@ -9,7 +9,25 @@ use Symfony\Component\Yaml\Yaml;
 
 class FileCassette
 {
-    public function __construct(private string $dir) {}
+    /**
+     * Redaction is enabled by default, configured from the XRR_REDACT_*
+     * environment variables. Pass an explicit Redactor to supply a
+     * policy that bypasses the environment.
+     */
+    public function __construct(
+        private string $dir,
+        private ?Redactor $redactor = null
+    ) {}
+
+    /**
+     * Resolves the redactor to use for one write. When none was
+     * injected, config is read from the environment on each write so a
+     * test that flips XRR_REDACT_* mid-process sees the change.
+     */
+    private function activeRedactor(): Redactor
+    {
+        return $this->redactor ?? Redactor::fromEnv();
+    }
 
     /**
      * Save request and response payloads as two YAML cassette files.
@@ -33,12 +51,16 @@ class FileCassette
         string $recordedAt,
         array $payload
     ): void {
+        // Scrub credential-bearing fields before serialization — a
+        // secret never reaches the YAML string, let alone the file.
+        // Envelope metadata is never scrubbed: the fingerprint in
+        // particular must match the filename.
         $envelope = [
             'xrr'         => '1',
             'adapter'     => $adapterID,
             'fingerprint' => $fingerprint,
             'recorded_at' => $recordedAt,
-            'payload'     => $payload,
+            'payload'     => $this->activeRedactor()->redactPayload($payload),
         ];
 
         $path = $this->path($adapterID, $fingerprint, $kind);
