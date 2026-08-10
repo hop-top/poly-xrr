@@ -266,8 +266,12 @@ r := xrr.NewRedactor(xrr.RedactConfig{Allow: []string{"FIXTURE_TOKEN"}})
 c := xrr.NewFileCassetteWithRedactor(dir, r)
 ```
 
-> **Note:** redaction currently ships in the Go port only. Other ports
-> record verbatim until they adopt it — see the spec's Secret Redaction
+The other ports expose the same escape hatch as an optional cassette
+constructor argument (`FileCassette::with_redactor` in Rust).
+
+> **Note:** redaction ships in every port (go / ts / py / php / rs)
+> with identical rules and placeholders, so re-recorded cassettes stay
+> byte-comparable across runtimes — see the spec's Secret Redaction
 > section for the shared contract.
 
 ## Languages

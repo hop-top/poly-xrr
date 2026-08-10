@@ -348,10 +348,12 @@ exposes these as `XRR_REDACT_ALLOW`, `XRR_REDACT_DENY`, and
 
 ### Adoption status
 
-Implemented in the Go port. ts / py / php / rs record verbatim until
-they adopt this section. Because redaction is record-side only, mixed
-adoption does not break replay in either direction — an unredacted
-cassette replays in a redacting port and vice versa.
+Implemented in all ports (go / ts / py / php / rs) with the same rule
+set and placeholder format, so re-recorded cassettes stay
+byte-comparable across runtimes. Because redaction is record-side
+only, mixing adopting and non-adopting versions does not break replay
+in either direction — an unredacted cassette replays in a redacting
+port and vice versa.
 
 ## Cross-Language Conformance
 
