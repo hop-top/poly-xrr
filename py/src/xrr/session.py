@@ -18,6 +18,19 @@ class Session:
             raise ValueError(f"xrr: unknown mode {mode!r}")
         self._mode = mode
         self._cassette = cassette
+        self._stream_counts: dict[tuple[Any, ...], int] = {}
+
+    def next_stream_n(self, *key: Any) -> int:
+        """Occurrence counter for streamed opens: the 0-based count of
+        prior opens with the same identifying tuple in this session.
+
+        One session object is one counter domain; the count advances at
+        each open and is computed identically in record and replay modes
+        (spec: Fingerprinting Streamed Interactions).
+        """
+        n = self._stream_counts.get(key, 0)
+        self._stream_counts[key] = n + 1
+        return n
 
     def record(self, adapter: Any, req: Any, do: Callable[[], Any]) -> Any:
         """Execute one interaction according to the session mode.

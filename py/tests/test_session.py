@@ -69,3 +69,29 @@ def test_invalid_mode_raises():
     c = FileCassette("/tmp")
     with pytest.raises(ValueError):
         Session("invalid", c)
+
+
+def test_next_stream_n_increments_per_key(tmp_path):
+    """Occurrence counter: 0-based, per identifying tuple, one domain
+    per session object (spec: Fingerprinting Streamed Interactions)."""
+    sess = _make_session(REPLAY, tmp_path)
+    assert sess.next_stream_n("files.FileService", "Upload", "client") == 0
+    assert sess.next_stream_n("files.FileService", "Upload", "client") == 1
+    # Different tuple, independent count.
+    assert sess.next_stream_n("chat.ChatService", "Converse", "bidi") == 0
+    assert sess.next_stream_n("files.FileService", "Upload", "client") == 2
+
+
+def test_next_stream_n_counts_same_in_record_and_replay(tmp_path):
+    key = ("files.FileService", "Upload", "client")
+    rec = _make_session(RECORD, tmp_path)
+    rep = _make_session(REPLAY, tmp_path)
+    assert [rec.next_stream_n(*key) for _ in range(3)] == [0, 1, 2]
+    assert [rep.next_stream_n(*key) for _ in range(3)] == [0, 1, 2]
+
+
+def test_stream_counter_domain_is_per_session(tmp_path):
+    a = _make_session(REPLAY, tmp_path)
+    b = _make_session(REPLAY, tmp_path)
+    assert a.next_stream_n("s", "m", "bidi") == 0
+    assert b.next_stream_n("s", "m", "bidi") == 0
