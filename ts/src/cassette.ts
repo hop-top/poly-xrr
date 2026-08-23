@@ -1,10 +1,25 @@
 /**
  * FileCassette — reads/writes YAML envelope files.
+ *
+ * Unary pairs go through save/load (payloads only, v1 behavior). Streamed
+ * pairs go through saveStreamed/loadStreamed; routing a streamed cassette
+ * down the unary path (or vice versa) is a ShapeMismatchError, distinct
+ * from a cassette miss, per spec/cassette-format-streaming.md.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
 import { ErrCassetteMiss, type Cassette } from "./xrr.js";
+import {
+  ShapeMismatchError,
+  StreamFormatError,
+  type StreamedInteraction,
+  emitStreamedEnvelope,
+  extractStreamNode,
+  parseReqStream,
+  parseRespStream,
+  validateStreamPair,
+} from "./stream.js";
 
 interface Envelope {
   xrr: string;
@@ -12,6 +27,8 @@ interface Envelope {
   fingerprint: string;
   recorded_at: string;
   payload: unknown;
+  error?: string;
+  stream?: unknown;
 }
 
 export class FileCassette implements Cassette {
@@ -26,6 +43,21 @@ export class FileCassette implements Cassette {
     const now = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
     await this.write(adapterID, fingerprint, "req", now, req);
     await this.write(adapterID, fingerprint, "resp", now, resp);
+  }
+
+  /** Writes both files of a streamed pair per the streaming writer rules. */
+  async saveStreamed(interaction: StreamedInteraction): Promise<void> {
+    const { req, resp } = interaction;
+    await fs.writeFile(
+      this.filePath(req.adapter, req.fingerprint, "req"),
+      emitStreamedEnvelope(req, "req"),
+      "utf8"
+    );
+    await fs.writeFile(
+      this.filePath(req.adapter, req.fingerprint, "resp"),
+      emitStreamedEnvelope(resp, "resp"),
+      "utf8"
+    );
   }
 
   private async write(
@@ -43,38 +75,90 @@ export class FileCassette implements Cassette {
       payload,
     };
     const data = yaml.dump(env, { lineWidth: -1 });
-    const filePath = path.join(this.dir, `${adapterID}-${fingerprint}.${kind}.yaml`);
-    await fs.writeFile(filePath, data, "utf8");
+    await fs.writeFile(this.filePath(adapterID, fingerprint, kind), data, "utf8");
   }
 
   async load(
     adapterID: string,
     fingerprint: string
   ): Promise<{ req: unknown; resp: unknown }> {
-    const req = await this.read(adapterID, fingerprint, "req");
-    const resp = await this.read(adapterID, fingerprint, "resp");
-    return { req, resp };
+    const { req, resp } = await this.loadPair(adapterID, fingerprint);
+    if (req.stream != null) {
+      throw new ShapeMismatchError("xrr: shape mismatch: streamed cassette on unary path");
+    }
+    return { req: req.payload, resp: resp.payload };
   }
 
-  private async read(
+  /** Loads and validates a streamed pair into the stream model. */
+  async loadStreamed(adapterID: string, fingerprint: string): Promise<StreamedInteraction> {
+    const { req, resp, reqText, respText } = await this.loadPair(adapterID, fingerprint);
+    if (req.stream == null) {
+      throw new ShapeMismatchError("xrr: shape mismatch: unary cassette on streaming path");
+    }
+    const reqStream = parseReqStream(extractStreamNode(reqText));
+    const respStream = parseRespStream(extractStreamNode(respText));
+    validateStreamPair(reqStream, respStream);
+    return {
+      req: {
+        xrr: req.xrr,
+        adapter: req.adapter,
+        fingerprint: req.fingerprint,
+        recorded_at: req.recorded_at,
+        payload: req.payload,
+        stream: reqStream,
+      },
+      resp: {
+        xrr: resp.xrr,
+        adapter: resp.adapter,
+        fingerprint: resp.fingerprint,
+        recorded_at: resp.recorded_at,
+        payload: resp.payload,
+        ...(resp.error != null && resp.error !== "" ? { error: resp.error } : {}),
+        stream: respStream,
+      },
+    };
+  }
+
+  private async loadPair(
+    adapterID: string,
+    fingerprint: string
+  ): Promise<{ req: Envelope; resp: Envelope; reqText: string; respText: string }> {
+    const reqText = await this.readText(adapterID, fingerprint, "req");
+    const respText = await this.readText(adapterID, fingerprint, "resp");
+    const req = parseEnvelope(reqText, "req");
+    const resp = parseEnvelope(respText, "resp");
+    if ((req.stream != null) !== (resp.stream != null)) {
+      throw new StreamFormatError(
+        "xrr: stream: present on one file of the pair but not the other"
+      );
+    }
+    return { req, resp, reqText, respText };
+  }
+
+  private async readText(
     adapterID: string,
     fingerprint: string,
     kind: "req" | "resp"
-  ): Promise<unknown> {
-    const filePath = path.join(this.dir, `${adapterID}-${fingerprint}.${kind}.yaml`);
-    let data: string;
+  ): Promise<string> {
     try {
-      data = await fs.readFile(filePath, "utf8");
+      return await fs.readFile(this.filePath(adapterID, fingerprint, kind), "utf8");
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw ErrCassetteMiss;
       }
       throw err;
     }
-    const env = yaml.load(data) as Envelope;
-    if (!env || typeof env !== "object" || !("payload" in env)) {
-      throw new Error(`xrr: missing payload in ${kind}`);
-    }
-    return env.payload;
   }
+
+  private filePath(adapterID: string, fingerprint: string, kind: "req" | "resp"): string {
+    return path.join(this.dir, `${adapterID}-${fingerprint}.${kind}.yaml`);
+  }
+}
+
+function parseEnvelope(data: string, kind: "req" | "resp"): Envelope {
+  const env = yaml.load(data) as Envelope | null | undefined;
+  if (!env || typeof env !== "object" || !("payload" in env)) {
+    throw new Error(`xrr: missing payload in ${kind}`);
+  }
+  return env;
 }

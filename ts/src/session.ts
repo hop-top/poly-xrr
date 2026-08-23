@@ -1,9 +1,17 @@
 /**
  * FileSession — record/replay/passthrough session.
  */
+import { OccurrenceCounter } from "./streamfp.js";
 import { type Adapter, type Cassette, ErrCassetteMiss, type Mode, type Session } from "./xrr.js";
 
 export class FileSession implements Session {
+  /**
+   * Per-session occurrence counter for streamed opens — one session object
+   * is one counter domain (spec/cassette-format-streaming.md). Streaming
+   * adapters key it by their identifying tuple at each stream open.
+   */
+  readonly streamCounter = new OccurrenceCounter();
+
   constructor(
     private readonly mode: Mode,
     private readonly cassette: Cassette
