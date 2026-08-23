@@ -89,6 +89,15 @@ class StreamReplay
         if ($this->mismatch !== null) {
             throw $this->mismatch;
         }
+        $i      = $this->sendIdx;
+        $frames = $this->pair->req->frames;
+        // Bytes at i >= S are never compared, so the hook is not invoked
+        // for them: it runs exactly once per frame that is validated.
+        if ($i >= count($frames)) {
+            $this->throwIfErrorTerminal();
+
+            return false;
+        }
         // Live send bytes are scrubbed before comparison, so a scrubbed
         // recording matches a scrubbed replay of the same traffic.
         $message = $this->scrub?->scrub(
@@ -97,13 +106,6 @@ class StreamReplay
             $this->pair->req->type,
             $message
         ) ?? $message;
-        $i      = $this->sendIdx;
-        $frames = $this->pair->req->frames;
-        if ($i >= count($frames)) {
-            $this->throwIfErrorTerminal();
-
-            return false;
-        }
         $recorded = $frames[$i]->bytes;
         if ($message !== $recorded) {
             throw $this->fail(new StreamMismatchException('send', $i, sprintf(

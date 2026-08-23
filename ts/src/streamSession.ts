@@ -257,10 +257,12 @@ export class StreamReplay {
    */
   send(message: Uint8Array): void {
     if (this.mismatch) throw this.mismatch;
-    message = scrubFrame(this.scrub, "send", { adapterID: this.adapterID, type: this.type }, message);
     const frames = this.pair.req.stream.frames;
     const i = this.sendIdx;
+    // Bytes at i >= S are never compared, so the hook is not invoked for
+    // them: it runs exactly once per frame that is actually validated.
     if (i >= frames.length) throw this.terminal();
+    message = scrubFrame(this.scrub, "send", { adapterID: this.adapterID, type: this.type }, message);
     const recorded = frames[i].message;
     if (!bytesEqual(message, recorded)) {
       throw this.fail(
