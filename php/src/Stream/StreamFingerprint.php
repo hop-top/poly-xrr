@@ -5,17 +5,21 @@ declare(strict_types=1);
 namespace HopTop\Xrr\Stream;
 
 /**
- * Streaming fingerprint algorithms (cassette-format-streaming.md).
+ * Streaming fingerprint core (cassette-format-streaming.md).
  *
- * All variants are `sha256(canonical_json)[:8]`: 8 lowercase hex chars of
- * the sha256 of deterministic JSON with lexicographically sorted keys and
- * no insignificant whitespace. The canonical strings are constructed
+ * All fingerprints are `sha256(canonical_json)[:8]`: 8 lowercase hex chars
+ * of the sha256 of deterministic JSON with lexicographically sorted keys
+ * and no insignificant whitespace. The canonical string is constructed
  * explicitly, key by key in sorted order, for byte-for-byte control —
- * service/method names are proto identifiers (`[A-Za-z0-9_.]`), so JSON
+ * identity values are proto identifiers or URLs in practice, whose JSON
  * string escaping never varies between ports.
  *
- * Every input set includes a `stream` discriminator, keeping streaming
- * canonical inputs disjoint from unary ones by construction.
+ * The split is structural: this core owns canonical-JSON assembly, the
+ * `stream` discriminator (keeping streaming canonical inputs disjoint from
+ * unary ones by construction), hashing/truncation, and — via the session —
+ * the occurrence-counter lifecycle. An adapter supplies only its canonical
+ * identity fields through {@see StreamOpen}. The gRPC-shaped helpers
+ * (server/client/bidi) are conveniences built on the same seam.
  */
 class StreamFingerprint
 {
@@ -28,55 +32,97 @@ class StreamFingerprint
     }
 
     /**
-     * Server-streaming: the single request message is available at open.
-     * `{"method":M,"msg_hash":H,"service":S,"stream":"server"}`
+     * Computes the streaming fingerprint for an open:
+     * `sha256(canonical(identity + "stream" discriminator [+ "n"]))[:8]`.
+     * Counter-addressed opens require the 0-based occurrence ordinal
+     * `$n >= 0`; `$n` is ignored otherwise (content-addressed identities,
+     * e.g. gRPC server streams, carry their content hash in the identity).
+     */
+    public static function compute(StreamOpen $open, int $n = -1): string
+    {
+        if ($open->counter) {
+            if ($n < 0) {
+                throw new \InvalidArgumentException(
+                    sprintf('xrr: stream occurrence n must be >= 0, got %d', $n)
+                );
+            }
+        } else {
+            $n = -1;
+        }
+
+        return substr(hash('sha256', self::canonical($open, $n)), 0, 8);
+    }
+
+    /**
+     * Assembles the spec's canonical JSON for an open: the adapter identity
+     * plus the injected `stream` discriminator, plus `n` when `$n >= 0`.
+     * Keys sorted lexicographically (byte order), no insignificant
+     * whitespace.
+     */
+    public static function canonical(StreamOpen $open, int $n = -1): string
+    {
+        $inputs = [];
+        foreach ($open->identity as $key => $value) {
+            $key = (string) $key;
+            if ($key === 'stream' || $key === 'n') {
+                throw new \InvalidArgumentException(
+                    sprintf('xrr: stream identity key "%s" is reserved for core injection', $key)
+                );
+            }
+            $inputs[$key] = $value;
+        }
+        $inputs['stream'] = $open->type->value;
+        if ($n >= 0) {
+            $inputs['n'] = $n;
+        }
+        ksort($inputs, SORT_STRING);
+
+        $parts = [];
+        foreach ($inputs as $key => $value) {
+            $parts[] = self::jsonString((string) $key) . ':'
+                . (is_int($value) ? (string) $value : self::jsonString($value));
+        }
+
+        return '{' . implode(',', $parts) . '}';
+    }
+
+    /**
+     * gRPC server-streaming: the single request message is available at
+     * open. `{"method":M,"msg_hash":H,"service":S,"stream":"server"}`
      */
     public static function server(string $service, string $method, string $messageBytes): string
     {
-        $canonical = sprintf(
-            '{"method":%s,"msg_hash":%s,"service":%s,"stream":"server"}',
-            self::jsonString($method),
-            self::jsonString(self::msgHash($messageBytes)),
-            self::jsonString($service)
-        );
-
-        return self::truncate($canonical);
+        return self::compute(new StreamOpen('grpc', StreamType::Server, [
+            'service'  => $service,
+            'method'   => $method,
+            'msg_hash' => self::msgHash($messageBytes),
+        ]));
     }
 
     /**
-     * Client-streaming: no message at open; `n` is the 0-based occurrence
-     * ordinal. `{"method":M,"n":N,"service":S,"stream":"client"}`
+     * gRPC client-streaming: no message at open; `n` is the 0-based
+     * occurrence ordinal. `{"method":M,"n":N,"service":S,"stream":"client"}`
      */
     public static function client(string $service, string $method, int $n): string
     {
-        return self::counted($service, $method, $n, 'client');
+        return self::counted($service, $method, $n, StreamType::Client);
     }
 
     /**
-     * Bidi: no message at open; `n` is the 0-based occurrence ordinal.
+     * gRPC bidi: no message at open; `n` is the 0-based occurrence ordinal.
      * `{"method":M,"n":N,"service":S,"stream":"bidi"}`
      */
     public static function bidi(string $service, string $method, int $n): string
     {
-        return self::counted($service, $method, $n, 'bidi');
+        return self::counted($service, $method, $n, StreamType::Bidi);
     }
 
-    private static function counted(string $service, string $method, int $n, string $stream): string
+    private static function counted(string $service, string $method, int $n, StreamType $type): string
     {
-        $canonical = sprintf(
-            '{"method":%s,"n":%d,"service":%s,"stream":"%s"}',
-            self::jsonString($method),
-            $n,
-            self::jsonString($service),
-            $stream
+        return self::compute(
+            new StreamOpen('grpc', $type, ['service' => $service, 'method' => $method], counter: true),
+            $n
         );
-
-        return self::truncate($canonical);
-    }
-
-    private static function truncate(string $canonical): string
-    {
-        return substr(hash('sha256', $canonical), 0, 8);
     }
 
     private static function jsonString(string $s): string
