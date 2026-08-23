@@ -5,6 +5,32 @@ export { ErrCassetteMiss } from "./xrr.js";
 export type { Adapter, Cassette, Mode, Session } from "./xrr.js";
 export { FileCassette } from "./cassette.js";
 export { FileSession } from "./session.js";
+export {
+  ShapeMismatchError,
+  StreamFormatError,
+  emitStreamedEnvelope,
+  extractStreamNode,
+  parseReqStream,
+  parseRespStream,
+  strictBase64Decode,
+  validateStreamPair,
+} from "./stream.js";
+export type {
+  FrameEncoding,
+  ReqStream,
+  RespStream,
+  StreamEventPos,
+  StreamFrame,
+  StreamType,
+  StreamedEnvelope,
+  StreamedInteraction,
+} from "./stream.js";
+export {
+  OccurrenceCounter,
+  counterStreamFingerprint,
+  msgHash,
+  serverStreamFingerprint,
+} from "./streamfp.js";
 export { ExecAdapter } from "./adapters/exec.js";
 export type { ExecRequest, ExecResponse } from "./adapters/exec.js";
 export { HttpAdapter } from "./adapters/http.js";
