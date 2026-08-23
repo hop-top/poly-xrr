@@ -860,3 +860,48 @@ fixture (sequenced opens driven by a runner, not static files alone).
 
 All ports MUST replay fixture cassettes regardless of which port recorded
 them — the v1 cross-runtime guarantee extends to streams unchanged.
+
+### Scrub Hook Obligations — Identity-Hook Matrix
+
+The [Frame Scrub Hook](#frame-scrub-hook) cannot be pinned by fixtures. Its
+contract is about WHEN the hook runs and WHAT it receives, never what it
+computes: xrr defines no scrub algorithm, and a fixture carrying scrubbed
+bytes would make some particular masking function normative spec surface
+that every port must reproduce byte-for-byte forever. Fixtures also cannot
+observe invocation counts, ordering, or the absence of a call — precisely
+the mechanics the clauses constrain.
+
+Ports therefore agree through a shared behavioural matrix, implemented
+identically in each port's own test suite. It adds no file to
+`spec/fixtures/`, no sidecar, and no key to any cassette.
+
+Two hooks generate the whole matrix, and neither is a scrub:
+
+- **identity** — `f(dir, info, data) = data`. Installed, invoked, and
+  observable, but byte-neutral. Any difference between an
+  identity-hook session and a no-hook session is a mechanics defect, since
+  clause 7 fixes the no-hook behaviour as the reference.
+- **counting** — identity, plus a side record of `(direction, bytes)` per
+  call. Reveals invocation points, multiplicity, and non-invocation. Its
+  bookkeeping is test scaffolding, not scrub state: the bytes it returns
+  are its input, so clause 4's determinism requirement is met.
+
+| # | Obligation | Clause |
+|---|------------|--------|
+| M1 | Recording with the identity hook and recording with no hook produce byte-identical `.req.yaml` / `.resp.yaml` and equal fingerprints, for `server`, `client`, and `bidi`. | 1, 3, 7 |
+| M2 | A cassette recorded under the identity hook replays green under no hook, and a cassette recorded with no hook replays green under the identity hook. | 5, 7 |
+| M3 | A server-stream fingerprint derived over identity-scrubbed open bytes equals the one derived over raw bytes, in record and replay mode alike. | 3 |
+| M4 | Under the counting hook, one record session over a `bidi` stream with `s` send frames and `r` recv frames yields exactly `s` `send` calls and `r` `recv` calls, in frame order, each carrying that frame's bytes. Half-close and the terminal contribute no call. | 2 |
+| M5 | Under the counting hook, replaying that cassette yields exactly one `send` call per live send that is compared, and zero `recv` calls — recorded frames are delivered verbatim. A send past the last recorded frame is never compared and yields no call. | 2, 5 |
+| M6 | An adapter that hands a frame to the core MUST NOT pre-scrub it: under the counting hook, the total call count for a frame that is both identity-derived and persisted is 1 per invocation point, never 2 for one point. | 3 |
+| M7 | A hook returning bytes of a different length than it received round-trips: the length-changed bytes persist, and a replay under the same hook is green. | 6 |
+
+M4 and M5 are what caught a real divergence: two ports invoked the hook on
+a live send before the bound check that rejects it, two after, so a send
+past the end of the recording was scrubbed in some ports and not others.
+No static vector can see that; a counting hook sees it immediately.
+
+A port's hook signature may be shaped idiomatically (a callable, a
+functional interface, flattened parameters) so long as it observes the same
+call sites with the same arguments. Matrix identity is behavioural, not
+syntactic.
