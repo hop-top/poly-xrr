@@ -371,10 +371,8 @@ func TestE2EStreamValidation_RealProcessRecordReplay(t *testing.T) {
 
 	execOKWire, err := proto.Marshal(wrapperspb.String(valExecOKScript))
 	require.NoError(t, err)
-	fpExecOK, err := xrr.StreamFingerprint(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamServer,
-		Service: valServiceName, Method: "Exec", Message: execOKWire,
-	}, -1)
+	fpExecOK, err := xrr.StreamFingerprint(
+		grpcStreamOpen(xrr.StreamServer, valServiceName, "Exec", execOKWire), -1)
 	require.NoError(t, err)
 	pair, err := cassette.LoadStream("grpc", fpExecOK)
 	require.NoError(t, err)

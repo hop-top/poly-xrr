@@ -90,16 +90,17 @@ func recomputeGRPCStreamFingerprint(t *testing.T, pair *xrr.StreamPair) string {
 	t.Helper()
 	service, _ := pair.ReqPayload["service"].(string)
 	method, _ := pair.ReqPayload["method"].(string)
-	open := xrr.StreamOpen{Type: pair.Req.Type, Service: service, Method: method}
+	var msg []byte
 	n := 0
 	if pair.Req.Type == xrr.StreamServer {
 		require.Len(t, pair.Req.Frames, 1, "server stream records exactly one send frame")
-		open.Message = pair.Req.Frames[0].Message
+		msg = pair.Req.Frames[0].Message
 	} else {
 		recorded, ok := pair.ReqPayload["n"].(int)
 		require.True(t, ok, "client/bidi req payload must record n")
 		n = recorded
 	}
+	open := grpcStreamOpen(pair.Req.Type, service, method, msg)
 	fp, err := xrr.StreamFingerprint(open, n)
 	require.NoError(t, err)
 	return fp
@@ -137,10 +138,7 @@ func TestConformanceScalarHazards(t *testing.T) {
 // then n=1 fingerprints and both conversations replayed.
 func TestConformanceClientStreamRepeat(t *testing.T) {
 	s := fixtureSession(t, "grpc-client-stream-repeat")
-	open := xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamClient,
-		Service: "files.FileService", Method: "Upload",
-	}
+	open := grpcStreamOpen(xrr.StreamClient, "files.FileService", "Upload", nil)
 
 	rep1, err := s.OpenStreamReplay(open)
 	require.NoError(t, err)
