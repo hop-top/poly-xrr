@@ -400,7 +400,10 @@ cassette from an unscrubbed one, and this section adds no key to any file.
 An implementation that offers the hook MUST conform to the following. The
 hook is a caller-supplied function of the frame's direction (`send` /
 `recv`), an identity context, and the frame's bytes, returning the bytes to
-use in place of the input.
+use in place of the input. The identity context is a set of values, not a
+required parameter shape: an implementation MAY carry it as one aggregate
+argument or flatten its fields into positional parameters, whichever is
+idiomatic for the language, provided the hook receives the same values.
 
 1. **Decoded bytes.** The hook MUST receive and return the DECODED frame
    bytes — the same octets that `message_b64` decodes to, or that
@@ -438,10 +441,16 @@ use in place of the input.
    across calls, runs, and processes, regardless of how many times or in
    what order it is invoked. Nondeterministic scrubbing (counters,
    timestamps, randomized placeholders) diverges content-addressed
-   fingerprints and send validation, and MUST NOT be used. Because the hook
-   is required to be deterministic, an implementation MAY invoke it in a
-   different order than another implementation without affecting the
-   cassette; conforming hooks MUST NOT depend on invocation count or order.
+   fingerprints and send validation, and MUST NOT be used. What determinism
+   licenses is ordering freedom ACROSS INDEPENDENT FRAMES, and nothing more:
+   where the stream itself does not order two frames, an implementation MAY
+   invoke the hook for them in either relative order without affecting the
+   cassette, and conforming hooks MUST NOT depend on that relative order.
+   Determinism does NOT license invoking the hook at a point clause 2
+   excludes, nor invoking it a different number of times per frame per point
+   than clause 2 requires: those counts are normative and observable to a
+   hook that counts its calls, and an implementation that varies them does
+   not conform.
 
 5. **Symmetry.** The SAME hook MUST be active on the session that records a
    cassette and on every session that replays it. Replay applies the hook
