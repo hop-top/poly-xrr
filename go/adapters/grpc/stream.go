@@ -81,12 +81,20 @@ func splitFullMethod(full string) (service, method string, err error) {
 // adapter boundary. Frames always store wire bytes (spec: message_b64), so
 // both the typed proto case and the raw-bytes case (custom byte codecs)
 // must be handled.
+//
+// Marshaling MUST be deterministic: protobuf map entries have no guaranteed
+// wire order, and the format's byte-level contracts (content-addressed
+// server-stream fingerprints, client/bidi send validation) presume the same
+// message always marshals to the same bytes. Plain proto.Marshal follows
+// Go's randomized map iteration and breaks both. Raw-bytes paths carry
+// caller-provided bytes verbatim and are unaffected.
 func marshalMessage(m any) ([]byte, error) {
+	det := proto.MarshalOptions{Deterministic: true}
 	switch v := m.(type) {
 	case proto.Message:
-		return proto.Marshal(v)
+		return det.Marshal(v)
 	case protoadapt.MessageV1:
-		return proto.Marshal(protoadapt.MessageV2Of(v))
+		return det.Marshal(protoadapt.MessageV2Of(v))
 	case *[]byte:
 		if v == nil {
 			return nil, errors.New("grpc: nil *[]byte message")

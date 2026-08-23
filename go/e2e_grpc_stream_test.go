@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -36,6 +37,7 @@ var streamServiceDesc = grpc.ServiceDesc{
 		{StreamName: "Download", Handler: downloadHandler, ServerStreams: true},
 		{StreamName: "Upload", Handler: uploadHandler, ClientStreams: true},
 		{StreamName: "Converse", Handler: converseHandler, ClientStreams: true, ServerStreams: true},
+		{StreamName: "Run", Handler: runHandler, ServerStreams: true},
 	},
 }
 
@@ -81,6 +83,26 @@ func uploadHandler(_ any, stream grpc.ServerStream) error {
 	}
 }
 
+// runHandler mimics an exec-style server stream whose request carries an
+// env map (structpb.Struct wraps a protobuf map field): protobuf gives map
+// entries no guaranteed wire order, so this shape only replays reliably when
+// the adapter marshals deterministically.
+func runHandler(_ any, stream grpc.ServerStream) error {
+	req := new(structpb.Struct)
+	if err := stream.RecvMsg(req); err != nil {
+		return err
+	}
+	if err := stream.SendMsg(wrapperspb.String(fmt.Sprintf("env-keys:%d", len(req.GetFields())))); err != nil {
+		return err
+	}
+	for i := 1; i <= 2; i++ {
+		if err := stream.SendMsg(wrapperspb.String(fmt.Sprintf("run-chunk-%d", i))); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // converseHandler pongs every ping until the client half-closes.
 func converseHandler(_ any, stream grpc.ServerStream) error {
 	for {
@@ -103,6 +125,7 @@ var (
 	downloadDesc = &grpc.StreamDesc{StreamName: "Download", ServerStreams: true}
 	uploadDesc   = &grpc.StreamDesc{StreamName: "Upload", ClientStreams: true}
 	converseDesc = &grpc.StreamDesc{StreamName: "Converse", ClientStreams: true, ServerStreams: true}
+	runDesc      = &grpc.StreamDesc{StreamName: "Run", ServerStreams: true}
 )
 
 // transcript is everything a client observes on one stream.
@@ -163,6 +186,38 @@ func uploadDriver(parts ...string) driver {
 	}
 }
 
+// envRequest builds a fresh ≥3-entry map request per call. Record and replay
+// each marshal their own instance, so any map-ordering nondeterminism in the
+// adapter's marshal diverges the server-stream fingerprint between phases.
+func envRequest(t *testing.T) *structpb.Struct {
+	t.Helper()
+	s, err := structpb.NewStruct(map[string]any{
+		"PATH": "/usr/local/bin:/usr/bin",
+		"HOME": "/home/dev",
+		"LANG": "C.UTF-8",
+		"TERM": "xterm-256color",
+	})
+	require.NoError(t, err)
+	return s
+}
+
+func runEnvDriver(extraReads int) driver {
+	return func(t *testing.T, conn *grpc.ClientConn) transcript {
+		t.Helper()
+		var tr transcript
+		cs, err := conn.NewStream(context.Background(), runDesc, "/"+streamServiceName+"/Run")
+		require.NoError(t, err)
+		tr.observe(cs.SendMsg(envRequest(t)))
+		tr.observe(cs.CloseSend())
+		for tr.recv(t, cs) {
+		}
+		for i := 0; i < extraReads; i++ {
+			tr.recv(t, cs)
+		}
+		return tr
+	}
+}
+
 func converseDriver(pings ...string) driver {
 	return func(t *testing.T, conn *grpc.ClientConn) transcript {
 		t.Helper()
@@ -190,6 +245,7 @@ var streamScenarios = []struct {
 	{"server-stream-error", downloadDriver("boom", 1)},
 	{"client-stream", uploadDriver("part-one", "part-two", "part-three")},
 	{"bidi", converseDriver("ping-1", "ping-2")},
+	{"server-stream-env-map", runEnvDriver(0)},
 }
 
 // ── wiring ─────────────────────────────────────────────────────────────────
@@ -241,6 +297,7 @@ func TestE2EGRPCStream_RecordThenReplayServerStopped(t *testing.T) {
 	assert.Equal(t, []string{"log-chunk-1", "log-chunk-2"}, recorded["server-stream-error"].msgs)
 	assert.Equal(t, []string{"received:26"}, recorded["client-stream"].msgs)
 	assert.Equal(t, []string{"pong:ping-1", "pong:ping-2"}, recorded["bidi"].msgs)
+	assert.Equal(t, []string{"env-keys:4", "run-chunk-1", "run-chunk-2"}, recorded["server-stream-env-map"].msgs)
 
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
