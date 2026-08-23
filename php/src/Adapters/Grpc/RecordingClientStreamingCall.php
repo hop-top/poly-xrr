@@ -52,10 +52,10 @@ final class RecordingClientStreamingCall extends ClientStreamingCall
     public function wait()
     {
         $event = $this->call->startBatch([
-            OP_SEND_CLOSE_FROM_CLIENT => true,
-            OP_RECV_INITIAL_METADATA  => true,
-            OP_RECV_MESSAGE           => true,
-            OP_RECV_STATUS_ON_CLIENT  => true,
+            \Grpc\OP_SEND_CLOSE_FROM_CLIENT => true,
+            \Grpc\OP_RECV_INITIAL_METADATA  => true,
+            \Grpc\OP_RECV_MESSAGE           => true,
+            \Grpc\OP_RECV_STATUS_ON_CLIENT  => true,
         ]);
         $this->metadata = $event->metadata;
 

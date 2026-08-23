@@ -53,9 +53,9 @@ final class RecordingBidiStreamingCall extends BidiStreamingCall
 
     public function read()
     {
-        $batch = [OP_RECV_MESSAGE => true];
+        $batch = [\Grpc\OP_RECV_MESSAGE => true];
         if ($this->metadata === null) {
-            $batch[OP_RECV_INITIAL_METADATA] = true;
+            $batch[\Grpc\OP_RECV_INITIAL_METADATA] = true;
         }
         $read_event = $this->call->startBatch($batch);
         if ($this->metadata === null) {

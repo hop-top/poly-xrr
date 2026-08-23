@@ -77,9 +77,9 @@ final class RecordingServerStreamingCall extends ServerStreamingCall
 
     public function responses()
     {
-        $batch = [OP_RECV_MESSAGE => true];
+        $batch = [\Grpc\OP_RECV_MESSAGE => true];
         if ($this->metadata === null) {
-            $batch[OP_RECV_INITIAL_METADATA] = true;
+            $batch[\Grpc\OP_RECV_INITIAL_METADATA] = true;
         }
         $read_event = $this->call->startBatch($batch);
         if ($this->metadata === null) {
@@ -92,7 +92,7 @@ final class RecordingServerStreamingCall extends ServerStreamingCall
             $this->rec?->recordRecv($response);
             yield $this->_deserializeResponse($response);
             $response = $this->call->startBatch([
-                OP_RECV_MESSAGE => true,
+                \Grpc\OP_RECV_MESSAGE => true,
             ])->message;
         }
     }
