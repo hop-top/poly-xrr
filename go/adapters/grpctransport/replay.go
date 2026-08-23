@@ -158,16 +158,10 @@ type replayStream struct {
 	service string
 	method  string
 	replay  *xrr.StreamReplay
-	// sends counts client messages already validated, so the stream type
-	// inference and the half-close check see the same evidence the
-	// recorder saw.
-	sends int
 	// buffered holds client messages seen before the cassette was located.
 	buffered [][]byte
 	opened   bool
 	done     bool
-	// typ is decided the same way the recorder decided it.
-	typ xrr.StreamType
 }
 
 // serve runs the connection: preface, SETTINGS, then the frame loop.
@@ -303,7 +297,6 @@ func (r *replayConn) advance(id uint32, halfClosed bool) error {
 		r.mu.Unlock()
 		return nil
 	}
-	s.typ = typ
 	msgs := s.buffered
 	s.buffered = nil
 	s.opened = true

@@ -32,10 +32,10 @@ import (
 //
 // The bar is the same one the interceptor-based streaming adapter is held
 // to: record a genuine workload over real TCP from a separate OS process,
-// then kill the server, verify the port is dead, unset the credentials, and
-// replay through a dialer that FAILS AND COUNTS any dial attempt. The
-// client-observed transcripts must be byte-identical, and the dial count
-// must be zero.
+// then KILL the server, verify its port is dead, unset the credentials, and
+// replay. The client-observed transcripts must come back byte-identical
+// with nothing listening and no credentials available — the recording is
+// the only possible source for them.
 //
 // The critical difference: nothing here uses a grpc interceptor. Capture
 // attaches only at grpc.WithContextDialer, which is exactly the seam
@@ -239,22 +239,30 @@ func tpRandomToken(t *testing.T) string {
 	return hex.EncodeToString(b)
 }
 
-// tpReplayConn builds a replay-mode client. The dialer counts every attempt
-// to reach the network and hands back the cassette-backed pipe instead, so
-// a nonzero count is a hard failure.
-func tpReplayConn(t *testing.T, session *xrr.FileSession, dir string, dials *atomic.Int32) *grpc.ClientConn {
+// tpReplayConn builds a replay-mode client.
+//
+// The no-network claim is enforced structurally rather than by counting
+// failures: the ONLY net.Conn this dialer can return is an in-memory pipe
+// fed from cassettes, so there is no code path here that can open a socket.
+// served counts how many connections the gRPC stack requested, which the
+// test asserts is non-zero — proving the replay path really ran rather
+// than the calls being skipped.
+func tpReplayConn(t *testing.T, session *xrr.FileSession, dir string, served *atomic.Int32) *grpc.ClientConn {
 	t.Helper()
 	replay := xtransport.ReplayDialer(session, dir)
 	conn, err := grpc.NewClient("passthrough:///transport-replay",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			// Count every dial request the gRPC stack makes, then serve it
+			// from cassettes. Nothing here can reach the network: the only
+			// net.Conn returned is an in-memory pipe.
+			served.Add(1)
 			return replay(ctx, addr)
 		}),
 		grpc.WithNoProxy(),
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
-	_ = dials
 	return conn
 }
 
@@ -332,16 +340,21 @@ func TestE2ETransportRecordReplay(t *testing.T) {
 	require.NoError(t, os.Unsetenv(tpTokenEnv))
 
 	// ── phase 4: replay — no server, no creds, no dials.
-	var dialAttempts atomic.Int32
+	var servedFromCassette atomic.Int32
 	repSession := xrr.NewSession(xrr.ModeReplay, xrr.NewFileCassette(dir))
-	repConn := tpReplayConn(t, repSession, dir, &dialAttempts)
+	repConn := tpReplayConn(t, repSession, dir, &servedFromCassette)
 
 	for _, sc := range tpScenarios {
 		replayed := sc.run(t, repConn)
 		assert.Equal(t, live[sc.name].msgs, replayed.msgs,
 			"%s: replayed messages must be byte-identical to the live run", sc.name)
 	}
-	assert.Zero(t, dialAttempts.Load(), "replay must never touch the network")
+	// Every connection the gRPC stack asked for was served from cassettes
+	// by an in-memory pipe; no socket was created. The server is dead and
+	// its port verified closed above, so any real network dependency here
+	// would have failed the transcript comparisons outright.
+	assert.Positive(t, servedFromCassette.Load(),
+		"the replay path must actually have been exercised")
 
 	// ── phase 5: cassettes conform to the core loader's validation.
 	cassette := xrr.NewFileCassette(dir)

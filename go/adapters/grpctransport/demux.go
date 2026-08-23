@@ -141,7 +141,6 @@ func (d *streamDecoder) feed(data []byte) ([][]byte, error) {
 // per stream ID (streams) and never assuming frames for one stream arrive
 // contiguously.
 type connDecoder struct {
-	dir     direction
 	framer  *http2.Framer
 	streams map[uint32]*streamDecoder
 	redact  headerRedactor
@@ -151,7 +150,7 @@ type connDecoder struct {
 	queued pendingMsgs
 }
 
-func newConnDecoder(dir direction, r io.Reader, redact headerRedactor) *connDecoder {
+func newConnDecoder(r io.Reader, redact headerRedactor) *connDecoder {
 	fr := http2.NewFramer(io.Discard, r)
 	// ReadMetaHeaders makes the Framer merge HEADERS + CONTINUATION and
 	// HPACK-decode them for us. Decoding is mandatory, not a convenience:
@@ -161,7 +160,6 @@ func newConnDecoder(dir direction, r io.Reader, redact headerRedactor) *connDeco
 	fr.ReadMetaHeaders = hpack.NewDecoder(hpackTableSize, nil)
 	fr.SetMaxReadFrameSize(maxFrameSize)
 	return &connDecoder{
-		dir:     dir,
 		framer:  fr,
 		streams: make(map[uint32]*streamDecoder),
 		redact:  redact,

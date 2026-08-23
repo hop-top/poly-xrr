@@ -64,17 +64,32 @@ func (c *recordConn) Write(b []byte) (int, error) {
 // Close tears down the live connection and waits for both decoders to
 // drain, so every stream that reached a terminal before close is persisted
 // before Close returns.
+//
+// A decoding failure is reported here rather than at the point it happened.
+// The tap is deliberately passive — it must never change the behaviour of
+// the traffic it observes — so a decoder that gives up cannot interrupt the
+// live call. But it must not vanish either: a recording session that
+// produced no usable cassette has to say so, or the next replay fails with
+// a confusing cassette miss instead of the real cause.
 func (c *recordConn) Close() error {
 	err := c.Conn.Close()
 	c.mu.Lock()
 	already := c.closed
 	c.closed = true
 	c.mu.Unlock()
-	if !already {
-		_ = c.toServer.CloseWithError(io.EOF)
-		_ = c.toClient.CloseWithError(io.EOF)
-		c.wg.Wait()
-		c.tracker.abandonAll()
+	if already {
+		return err
+	}
+	_ = c.toServer.CloseWithError(io.EOF)
+	_ = c.toClient.CloseWithError(io.EOF)
+	c.wg.Wait()
+	c.tracker.abandonAll()
+
+	c.mu.Lock()
+	decodeErr := c.firstErr
+	c.mu.Unlock()
+	if err == nil && decodeErr != nil {
+		return fmt.Errorf("grpctransport: recording incomplete: %w", decodeErr)
 	}
 	return err
 }
@@ -136,7 +151,7 @@ func (c *recordConn) decode(dir direction, r io.Reader, redactor headerRedactor)
 			return
 		}
 	}
-	dec := newConnDecoder(dir, r, redactor)
+	dec := newConnDecoder(r, redactor)
 	for {
 		ev, err := dec.next()
 		if err != nil {
