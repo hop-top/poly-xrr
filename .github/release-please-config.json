@@ -4,6 +4,8 @@
   "pull-request-title-pattern": "chore(release):${component} ${version}",
   "include-component-in-tag": true,
   "tag-separator": "/",
+  "label": "status:release-pending",
+  "release-label": "status:release-tagged",
   "changelog-sections": [
     {"type": "feat", "section": "Features"},
     {"type": "fix", "section": "Bug Fixes"},
