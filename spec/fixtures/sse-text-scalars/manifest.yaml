@@ -1,0 +1,4 @@
+interactions:
+  - adapter: sse
+    fingerprint: "66ecc77a"
+    streamed: true

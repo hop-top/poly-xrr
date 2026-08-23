@@ -1,0 +1,28 @@
+xrr: "1"
+adapter: sse
+fingerprint: "66ecc77a"
+recorded_at: "2026-08-23T12:00:00Z"
+payload: {}
+stream:
+  frames:
+    - seq: 0
+      message_text: "on"
+      at_ms: 1
+    - seq: 1
+      message_text: "12:30"
+      at_ms: 2
+    - seq: 2
+      message_text: "null"
+      at_ms: 3
+    - seq: 3
+      message_text: " leading"
+      at_ms: 4
+    - seq: 4
+      message_text: "trailing "
+      at_ms: 5
+    - seq: 5
+      message_text: "  padded  "
+      at_ms: 6
+  end:
+    seq: 6
+    at_ms: 7
