@@ -1,10 +1,18 @@
+# Order is not a sequencing directive (see cassette-format-streaming.md,
+# Manifest Extension). These three entries sit in three distinct counter
+# domains — a server-stream open uses no counter, and the client/bidi opens
+# differ in (service, method, type) — so no open order can collide them.
+# The ordering rule is scoped to entries sharing a counter domain; no two of
+# these do, so it constrains nothing here and any open order replays. The
+# listing below is arbitrary: `n` is 0 for both counter-addressed entries and
+# absent on the server-stream one, so it does not order these three at all.
 interactions:
   - adapter: grpc
-    fingerprint: "ffbc4bac"
+    fingerprint: "ebbd3938"   # chat.ChatService/Ping, bidi, n=0
     streamed: true
   - adapter: grpc
-    fingerprint: "fbdff683"
+    fingerprint: "fbdff683"   # telemetry.MetricsService/Push, client, n=0
     streamed: true
   - adapter: grpc
-    fingerprint: "ebbd3938"
+    fingerprint: "ffbc4bac"   # files.FileService/Download, server (no counter)
     streamed: true

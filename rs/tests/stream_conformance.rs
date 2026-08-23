@@ -125,8 +125,33 @@ fn streamed_fingerprints_recompute_from_content() {
             .iter()
             .map(|i| StreamedPair::load(&dir, &i.adapter, &i.fingerprint).unwrap())
             .collect();
-        // Scripted open order for multi-pair dirs: ascending payload n.
-        pairs.sort_by_key(|p| p.req.payload.get("n").and_then(|v| v.as_u64()).unwrap_or(0));
+        // Scripted open order for multi-pair dirs, per the spec's ordering rule
+        // (cassette-format-streaming.md, Manifest Extension): ascending payload
+        // `n` within a counter domain — the (service, method, stream type)
+        // tuple of a client/bidi open. Server streams are content-addressed,
+        // draw no counter and record no `n`; they are keyed apart so they never
+        // interleave into a domain's ascending-n run, rather than defaulting to
+        // n=0 and letting file order break the tie.
+        pairs.sort_by_key(|p| {
+            let ty = p.req.stream.stream_type;
+            if ty == StreamType::Server {
+                return (String::new(), String::new(), 0u8, 0u64);
+            }
+            let s = |k| {
+                p.req.payload
+                    .get(k)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string()
+            };
+            let domain = match ty {
+                StreamType::Client => 1u8,
+                StreamType::Bidi => 2u8,
+                StreamType::Server => 0u8,
+            };
+            let n = p.req.payload.get("n").and_then(|v| v.as_u64()).unwrap_or(0);
+            (s("service"), s("method"), domain, n)
+        });
 
         for pair in &pairs {
             let service = pair.req.payload.get("service").unwrap().as_str().unwrap();

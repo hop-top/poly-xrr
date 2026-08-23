@@ -58,7 +58,7 @@ Summary of the load-bearing choices; normative detail follows.
    short of such a collision, a pre-streaming loader replaying a unary
    request gets a loud cassette miss rather than a degenerate hit.
 9. **Message bytes: exactly one of `message_b64` or `message_text` per
-   frame.** Binary payloads (protobuf wire bytes) are standard base64;
+   frame.** Binary payloads (e.g. protobuf wire bytes) are standard base64;
    valid-UTF-8 payloads MAY use a plain string for human diffability
    (the fs `data` precedent). Fingerprints and comparisons always operate on
    decoded bytes, so both encodings are equivalent. No YAML `!!binary` tags —
@@ -494,9 +494,9 @@ reviewer reads and a repo that only grows. Guidance:
   only the control traffic around it.
 - Keep individual cassettes in the low hundreds of KB.
 - Prefer `message_text` for textual frames where the adapter mapping
-  allows it — it diffs and reviews like the prose it is (gRPC frames are
-  wire bytes and MUST stay `message_b64`; this applies to future textual
-  channels such as SSE).
+  allows it — it diffs and reviews like the prose it is (gRPC frames MUST
+  stay `message_b64` whatever their codec emits; this applies to future
+  textual channels such as SSE).
 
 ## Validation Rules
 
@@ -543,8 +543,34 @@ Mapping constraints (readers SHOULD verify, writers MUST satisfy):
 
 ### Message Encoding
 
-Frames carry protobuf wire bytes. gRPC writers MUST use `message_b64` and
-MUST NOT use `message_text`.
+Frames carry whatever bytes the call's codec puts on the wire — for
+generated protobuf clients, protobuf wire bytes. gRPC writers MUST use
+`message_b64` and MUST NOT use `message_text`.
+
+**The frame layer never decodes.** `message_b64` is an opaque byte string
+to everything in this format: `msg_hash` is `sha256` over those bytes, send
+validation compares them byte-for-byte, and the validation rules check
+base64 well-formedness only. No reader parses a frame payload, so no reader
+needs a protobuf runtime, a descriptor, or a `.proto` file. gRPC's codec
+seam is a caller-supplied serializer pair, and adapters take it from the
+caller precisely so this stays true: a custom codec that marshals raw bytes
+(or JSON, or flatbuffers) produces conforming cassettes, and the
+`message_b64` requirement above binds the *encoding choice* — base64, never
+`message_text` — not the payload's schema.
+
+Consequently the conformance fixtures under `spec/fixtures/` carry
+hand-authored JSON and ASCII bytes rather than marshalled protobuf. This is
+deliberate, and implementers MUST NOT read it as a defect in the fixtures:
+they exercise stream *semantics* — framing, ordering, `seq` interleaving,
+send validation, terminal reconstruction, content-addressed identity — none
+of which involve the payload's schema, and authoring them as readable bytes
+keeps them diffable (see Practical Limits) and lets ports whose gRPC
+support is optional run format conformance with no protobuf dependency at
+all. The fingerprint test vectors below are computed over exactly these
+bytes and are normative as written. Ports drive fixtures through a
+byte-transparent (identity) codec; coverage of real protobuf marshalling
+belongs in each port's live/e2e tests against an actual gRPC runtime, where
+the deterministic-serialization requirement below is what matters.
 
 **Deterministic serialization.** Byte-level send validation and
 content-addressed server-stream fingerprints presume that the recording and
@@ -652,7 +678,9 @@ truncation-collision risk is the one v1 already accepts; short of such a
 collision, a unary replay against a session recorded as streaming misses
 loudly instead of hitting a degenerate response.
 
-Test vectors (verifiable byte-for-byte):
+Test vectors (verifiable byte-for-byte). The `server` rows hash the quoted
+message as literal UTF-8 bytes — `msg_hash` never decodes a payload, so
+these hold for any codec and match the `spec/fixtures/` cassettes exactly:
 
 | Case | Inputs | Canonical JSON | Fingerprint |
 |------|--------|----------------|-------------|
@@ -664,8 +692,10 @@ Test vectors (verifiable byte-for-byte):
 ## Worked Example: Server-Stream
 
 Client calls `files.FileService/Download` with request
-`{"path":"/etc/hosts"}` (wire bytes shown as ASCII for readability); server
-streams three chunks and finishes OK.
+`{"path":"/etc/hosts"}`; server streams three chunks and finishes OK. The
+message bytes here are those 21 ASCII characters literally, not a rendering
+of protobuf — the codec is byte-transparent, as in the fixtures, so
+`msg_hash` is taken over exactly those bytes (see Message Encoding).
 
 `grpc-58a4bf3f.req.yaml`:
 
@@ -829,6 +859,48 @@ interactions:
 `streamed` defaults to false when absent. Runners use it to route the entry
 through the streaming replay path.
 
+**`interactions` order is not an open sequence.** The list is an unordered
+set of pairs that must replay; it carries no scheduling meaning, and
+runners MUST NOT treat its order as the order to open streams in. This
+matters because counter-addressed opens (`client` / `bidi`) derive their
+fingerprint from a per-session occurrence counter: driving two opens of the
+same `(service, method, stream type)` tuple in the wrong order assigns them
+each other's `n`, and the recomputed fingerprints miss. A dir whose entries
+happen to occupy distinct counter domains survives any order by
+composition, not by guarantee.
+
+Until the schema gains an explicit sequencing affordance, runners MUST
+establish the order themselves. The rule is scoped to a counter domain,
+because that is the only scope in which order is observable:
+
+- Partition the dir's entries by counter domain — the tuple `(service,
+  method, stream type)` for `client` and `bidi` entries. Server-stream
+  entries are content-addressed, use no counter, and belong to no domain.
+- **Within** one counter domain, open ascending by the req payload's `n`.
+  Every entry in such a domain records an `n` (writers MUST record it at
+  open), and within one domain those `n` values are distinct — one per
+  occurrence — so this determines a unique order with no tiebreak needed.
+- **Across** distinct counter domains, and for server-stream entries, open
+  order is unconstrained: no interleaving changes any fingerprint, because
+  no two such opens ever draw from the same counter. Runners MAY open them
+  in any order, and MUST NOT rely on one.
+
+The rule is therefore total: it fixes the order of exactly the opens whose
+order is load-bearing, and declares the rest order-independent. It never
+appeals to the entries' order in the file, and never needs to compare an
+entry that records `n` against one that does not — server-stream entries
+(which omit `n`) are never members of a domain being sorted.
+
+This is the one sanctioned use of payload `n`: sequencing a *fixture*
+replay whose opens are not otherwise ordered. It remains prohibited as a
+matching input — replay still recomputes its own counter and MUST NOT read
+payload `n` to locate a cassette (see [Request Payload](#request-payload)).
+
+A future revision may let an entry carry an explicit ordinal (e.g. `open:
+0`) so the manifest states sequencing directly rather than leaving runners
+to infer it from payloads; the same gap is why an expected-rejection entry
+cannot be expressed either, and negative fixtures must be targeted by path.
+
 ## Conformance Obligations
 
 Fixture dirs land under `spec/fixtures/` in a follow-up; the obligations are
@@ -866,6 +938,16 @@ required):**
 The client-stream obligations include an `n = 1` case — a second open of
 the same tuple within one session — which requires a scripted two-open
 fixture (sequenced opens driven by a runner, not static files alone).
+
+Fixture frames carry readable JSON/ASCII bytes, not marshalled protobuf
+(see [Message Encoding](#message-encoding)), so ports satisfy the
+adapter-level table by driving their adapter with a byte-transparent
+identity codec — the frame layer never decodes, and none of the obligations
+above depend on the payload's schema. Format-layer conformance therefore
+requires no protobuf runtime, which is what lets ports whose gRPC adapter
+is optional run it unconditionally. Real protobuf marshalling — and with it
+the deterministic-serialization requirement — is exercised by each port's
+live/e2e tests against an actual gRPC runtime, not by these fixtures.
 
 All ports MUST replay fixture cassettes regardless of which port recorded
 them — the v1 cross-runtime guarantee extends to streams unchanged.

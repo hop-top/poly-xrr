@@ -38,7 +38,16 @@ async function roundTrip(pair: StreamedInteraction): Promise<void> {
   expect(reloaded).toEqual(pair);
 }
 
-/** Recompute a grpc streaming fingerprint from the loaded pair per spec. */
+/**
+ * Recompute a grpc streaming fingerprint from the loaded pair per spec.
+ *
+ * `n` comes from each pair's own payload rather than from a counter shared
+ * across the dir, so the manifest loop below is order-independent: the spec's
+ * ordering rule (cassette-format-streaming.md, Manifest Extension) holds
+ * vacuously here, with no shared counter for a wrong order to desynchronise.
+ * The "manifest order is irrelevant" test pins that so the construction cannot
+ * regress into a shared-counter loop unnoticed.
+ */
 function recomputeGrpcFingerprint(pair: StreamedInteraction): string {
   const payload = pair.req.payload as GrpcStreamPayload;
   if (pair.req.stream.type === "server") {
@@ -69,6 +78,40 @@ describe("conformance fixtures", () => {
           expect(pair.req.fingerprint).toBe(interaction.fingerprint);
           expect(pair.resp.fingerprint).toBe(interaction.fingerprint);
           await roundTrip(pair);
+          if (interaction.adapter === "grpc") {
+            expect(recomputeGrpcFingerprint(pair)).toBe(interaction.fingerprint);
+          }
+        } else {
+          await expect(
+            cassette.load(interaction.adapter, interaction.fingerprint)
+          ).resolves.not.toThrow();
+        }
+      }
+    });
+  }
+});
+
+describe("manifest order is irrelevant", () => {
+  // `interactions` is an unordered set (Manifest Extension), so reversing a
+  // manifest's entries is a legal edit and must not change any result. Only
+  // grpc-client-stream-repeat has entries sharing a counter domain, so it is
+  // the dir a shared-counter regression would break first.
+  const dirs = fs
+    .readdirSync(fixturesRoot, { withFileTypes: true })
+    .filter((e) => e.isDirectory());
+
+  for (const entry of dirs) {
+    test(entry.name, async () => {
+      const fixtureDir = path.join(fixturesRoot, entry.name);
+      const manifest = yaml.load(
+        fs.readFileSync(path.join(fixtureDir, "manifest.yaml"), "utf8")
+      ) as Manifest;
+      const cassette = new FileCassette(fixtureDir);
+
+      for (const interaction of [...manifest.interactions].reverse()) {
+        if (interaction.streamed) {
+          const pair = await cassette.loadStreamed(interaction.adapter, interaction.fingerprint);
+          expect(pair.req.fingerprint).toBe(interaction.fingerprint);
           if (interaction.adapter === "grpc") {
             expect(recomputeGrpcFingerprint(pair)).toBe(interaction.fingerprint);
           }

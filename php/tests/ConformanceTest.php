@@ -34,13 +34,22 @@ class ConformanceTest extends TestCase
     }
 
     /**
-     * Manifest interactions in file order.
+     * Manifest interactions in a spec-conforming open order.
+     *
+     * `interactions` is an unordered set (cassette-format-streaming.md,
+     * Manifest Extension), so file order is not open order. Entries sharing a
+     * counter domain — the (service, method, stream type) tuple of a
+     * client/bidi open — are ordered ascending by the req payload's `n`;
+     * server streams, distinct domains and non-streamed entries are
+     * order-independent and keyed apart so they never interleave into a
+     * domain's ascending-n run.
      *
      * @return list<array{adapter: string, fingerprint: string, streamed: bool}>
      */
     private function manifestInteractions(string $entry): array
     {
-        $manifestPath = $this->fixturesDir() . '/' . $entry . '/manifest.yaml';
+        $dir          = $this->fixturesDir() . '/' . $entry;
+        $manifestPath = $dir . '/manifest.yaml';
         $this->assertFileExists($manifestPath, "manifest.yaml missing in $entry");
 
         $manifest     = Yaml::parseFile($manifestPath);
@@ -52,6 +61,28 @@ class ConformanceTest extends TestCase
                 'streamed'    => (bool) ($interaction['streamed'] ?? false),
             ];
         }
+
+        $keyOf = function (array $i) use ($dir): array {
+            if (!$i['streamed']) {
+                return ['', '', '', 0];
+            }
+            $req = Yaml::parseFile(
+                $dir . '/' . $i['adapter'] . '-' . $i['fingerprint'] . '.req.yaml'
+            );
+            $type = $req['stream']['type'];
+            if ($type === 'server') {
+                return ['', '', '', 0];
+            }
+
+            return [
+                $req['payload']['service'] ?? '',
+                $req['payload']['method'] ?? '',
+                $type,
+                $req['payload']['n'],
+            ];
+        };
+
+        usort($interactions, fn (array $a, array $b) => $keyOf($a) <=> $keyOf($b));
 
         return $interactions;
     }
