@@ -20,6 +20,12 @@ Dev is testing code that runs remote commands over a server-streaming gRPC API
 stream once and committing the cassette lets CI replay the whole conversation —
 chunks, end-of-stream, even mid-stream errors — with the server stopped.
 
+Recording is not interceptor-only: every port (Go, ts, py, rs, php) ships a
+session-level stream API — open a recording, append frames, finish; open a
+replay, send/receive against the recorded conversation. The Go gRPC
+interceptor is a convenience built on that API, and a cassette recorded in
+any port replays in every other.
+
 ---
 
 ## Acceptance Criteria
@@ -33,6 +39,9 @@ chunks, end-of-stream, even mid-stream errors — with the server stopped.
 - [ ] Replay validates sent messages byte-for-byte; divergent sends fail with a
       stream mismatch (not silent wrong data).
 - [ ] If the cassette pair is missing: `ErrCassetteMiss` (not a hang or a dial).
+- [ ] The recorded pair replays through every port's stream session API
+      (`openStreamReplay` / `open_stream_replay` per language) — same frames,
+      same terminal, byte-validated sends.
 
 ---
 
@@ -55,6 +64,8 @@ stream = client.Run(ctx, req)          // served from the cassette, no dial
 
 - `go/adapters/grpc/stream.go`: `StreamClientInterceptor` record/replay dispatch
 - `go/stream_session.go`: stream open/record/replay core
+- `ts/src/streamSession.ts`, `py/src/xrr/stream_session.py`,
+  `rs/src/stream_session.rs`, `php/src/Stream/`: port stream session APIs
 - `spec/cassette-format-streaming.md`: streamed-interaction format
 - `go/e2e_grpc_stream_test.go`: live-record → server-stopped-replay reference
 
@@ -68,8 +79,12 @@ stream = client.Run(ctx, req)          // served from the cassette, no dial
       messages and terminal, and zero dial attempts.
 - [ ] Replay a recorded mid-stream error; verify the status code survives replay.
 - [ ] Delete the pair; verify `ErrCassetteMiss`.
-- [ ] Confirm no secret-bearing frames were recorded — frames are verbatim, there
-      is no redaction for stream frames.
+- [ ] Replay the same pair in at least one other port via its stream session
+      API; verify identical frames and terminal.
+- [ ] Confirm no secret-bearing frames were recorded — frames are verbatim
+      unless the Go scrub hook (`NewSessionWithStreamScrub`) is installed on
+      both the recording and replaying session; the other ports have no hook
+      yet.
 
 ---
 

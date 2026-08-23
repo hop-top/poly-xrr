@@ -123,9 +123,13 @@ semantics: [spec/cassette-format-streaming.md](spec/cassette-format-streaming.md
   only seam). Install the same hook on the recording and replaying
   session. Other ports have no hook yet: don't tape secret-bearing
   streams there (exec-style stdin/env is the classic trap).
-- **Format is portable, adapter is Go-only today.** ts / py / rs / php
-  read and write streamed cassettes (format layer); only the Go port
-  ships the streaming interceptor.
+- **Every port records and replays streams; the gRPC adapter is Go-only
+  today.** ts / py / rs / php ship the same stream session API as Go —
+  open a stream recording, append frames, finish; open a replay,
+  send/receive against the recorded conversation — with adapter-supplied
+  identities, so any port can tape and serve streamed interactions
+  programmatically and replay cassettes recorded by any other. Only the
+  Go port ships the gRPC streaming interceptor on top of it.
 - Unary RPCs keep the existing unary cassette shape — nothing migrates.
 
 ## Cross-process e2e (XRR_MODE + XRR_CASSETTE_DIR)
