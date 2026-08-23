@@ -108,16 +108,82 @@ def msg_hash(message: bytes) -> str:
     return hashlib.sha256(message).hexdigest()[:8]
 
 
+@dataclass
+class StreamOpen:
+    """Identifies a streamed interaction at open time — everything a
+    replay needs to locate the cassette before any frames exist. The
+    adapter supplies its canonical fingerprint inputs (identity), its req
+    payload shape (payload), and whether the open is disambiguated by the
+    session's occurrence counter (counter); the core owns canonical-JSON
+    assembly, the "stream" discriminator, hashing/truncation, and the
+    counter lifecycle (spec: Fingerprinting Streamed Interactions)."""
+
+    adapter_id: str
+    type: str
+    # Adapter canonical fingerprint inputs (for gRPC: service, method, and
+    # msg_hash for server streams; for an SSE-style adapter: url). Keys
+    # "stream" and "n" are reserved for core injection. Values must
+    # serialize deterministically as JSON (strings and ints in practice).
+    identity: dict[str, Any] = field(default_factory=dict)
+    # Counter-addressed open: the identity does not fully identify the
+    # interaction, so the session's occurrence counter — keyed by
+    # (adapter_id, type, identity) — supplies the 0-based ordinal n,
+    # injected as canonical input "n" and informational payload field "n".
+    counter: bool = False
+    # Adapter-defined open-request payload persisted to the req file. The
+    # core injects "n" for counter-addressed opens.
+    payload: dict[str, Any] = field(default_factory=dict)
+
+
+def stream_canonical(open: StreamOpen, n: int | None) -> str:
+    """Canonical JSON for a streamed open: the adapter identity plus the
+    injected "stream" discriminator, plus "n" when given. Sorted keys, no
+    insignificant whitespace — exactly the spec's canonical JSON."""
+    if open.type not in STREAM_TYPES:
+        raise ValueError(
+            f"xrr: stream type {open.type!r} invalid (want server|client|bidi)"
+        )
+    inputs = dict(open.identity)
+    for key in ("stream", "n"):
+        if key in inputs:
+            raise ValueError(
+                f"xrr: stream identity key {key!r} is reserved for core injection"
+            )
+    inputs["stream"] = open.type
+    if n is not None:
+        inputs["n"] = n
+    return json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+
+
+def stream_fingerprint(open: StreamOpen, n: int | None = None) -> str:
+    """Streaming fingerprint for an open: sha256(canonical_json)[:8] over
+    the adapter's canonical inputs plus a "stream" discriminator, keeping
+    the streaming fingerprint space disjoint from the unary one.
+    Counter-addressed opens include the 0-based occurrence ordinal n as
+    canonical input "n"; n is ignored otherwise (content-addressed
+    identities, e.g. gRPC server streams, hash their content instead)."""
+    if open.counter:
+        if n is None or n < 0:
+            raise ValueError(f"xrr: stream occurrence n must be >= 0, got {n!r}")
+    else:
+        n = None
+    canonical = stream_canonical(open, n)
+    return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+
+
 def server_stream_fingerprint(service: str, method: str, message: bytes) -> str:
     """Server-stream fingerprint: the single request message is available
     at open, so its hash is fingerprint input (mirrors unary)."""
-    return canonical_fingerprint(
-        {
-            "method": method,
-            "msg_hash": msg_hash(message),
-            "service": service,
-            "stream": SERVER,
-        }
+    return stream_fingerprint(
+        StreamOpen(
+            adapter_id="grpc",
+            type=SERVER,
+            identity={
+                "service": service,
+                "method": method,
+                "msg_hash": msg_hash(message),
+            },
+        )
     )
 
 
@@ -127,8 +193,14 @@ def counter_stream_fingerprint(
     """Client/bidi fingerprint: no message at open; `n` is the 0-based
     occurrence of the (service, method, stream type) tuple in the session
     (see Session.next_stream_n). Always included, even when 0."""
-    return canonical_fingerprint(
-        {"method": method, "n": n, "service": service, "stream": stream_type}
+    return stream_fingerprint(
+        StreamOpen(
+            adapter_id="grpc",
+            type=stream_type,
+            identity={"service": service, "method": method},
+            counter=True,
+        ),
+        n,
     )
 
 
