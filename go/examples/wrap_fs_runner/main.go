@@ -166,7 +166,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 
 	cassetteDir := filepath.Join(tmp, "cassettes")
 	if err := os.MkdirAll(cassetteDir, 0o755); err != nil {

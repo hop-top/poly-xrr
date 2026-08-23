@@ -112,6 +112,13 @@ func (c *FileCassette) read(adapterID, fingerprint, kind string, target any) (st
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return "", fmt.Errorf("xrr: unmarshal envelope %s: %w", kind, err)
 	}
+	// A streamed cassette must never replay through the unary code path
+	// (shape mismatch, distinct from a miss). Streamed pairs are read via
+	// LoadStream instead.
+	if _, streamed := raw["stream"]; streamed {
+		return "", fmt.Errorf("xrr: streamed cassette in unary code path (%s): %w", kind, ErrShapeMismatch)
+	}
+
 	payloadNode, ok := raw["payload"]
 	if !ok {
 		return "", fmt.Errorf("xrr: missing payload in %s", kind)
