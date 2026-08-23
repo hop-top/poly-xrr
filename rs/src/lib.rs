@@ -6,6 +6,7 @@ pub mod redact;
 pub mod session;
 pub mod stream;
 mod stream_fingerprint;
+pub mod stream_scrub;
 mod stream_session;
 
 pub use cassette::FileCassette;
@@ -14,6 +15,7 @@ pub use redact::{
     RedactConfig, Redactor, ENV_REDACT_ALLOW, ENV_REDACT_DENY, ENV_REDACT_DISABLE,
 };
 pub use session::{Mode, Session};
+pub use stream_scrub::{StreamDirection, StreamScrub, StreamScrubInfo};
 pub use stream_session::{StreamRecording, StreamReplay};
 
 use serde::{de::DeserializeOwned, Serialize};
