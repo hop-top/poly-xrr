@@ -17,6 +17,10 @@ type FileSession struct {
 	// stream_session.go.
 	streamMu sync.Mutex
 	streamN  map[string]int
+
+	// streamScrub is the frame-level scrub hook, nil by default (frames
+	// record and replay verbatim). See stream_scrub.go.
+	streamScrub StreamScrubFunc
 }
 
 // NewSession creates a FileSession with the given mode and cassette.

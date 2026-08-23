@@ -73,7 +73,14 @@ func streamTypeOf(desc *grpc.StreamDesc) (xrr.StreamType, error) {
 // {service, method}. Server streams are content-addressed via
 // msg_hash = sha256(message_bytes)[:8] (the wire bytes of the single
 // request message); client/bidi opens are counter-addressed.
-func streamOpen(typ xrr.StreamType, service, method string, msg []byte) xrr.StreamOpen {
+//
+// The msg_hash is the one identity input derived from message bytes, and it
+// is computed here, before the core's frame seam — so it is derived from
+// the session-scrubbed bytes. Record and replay both pass through this
+// path, which keeps a scrubbed recording and a scrubbed replay of the same
+// live traffic addressing the same cassette. The raw message itself is
+// handed to the core untouched: the core scrubs frames exactly once.
+func streamOpen(session *xrr.FileSession, typ xrr.StreamType, service, method string, msg []byte) xrr.StreamOpen {
 	open := xrr.StreamOpen{
 		AdapterID: adapterID,
 		Type:      typ,
@@ -81,7 +88,9 @@ func streamOpen(typ xrr.StreamType, service, method string, msg []byte) xrr.Stre
 		Payload:   map[string]any{"service": service, "method": method},
 	}
 	if typ == xrr.StreamServer {
-		sum := sha256.Sum256(msg)
+		scrubbed := session.ScrubStreamFrame(xrr.StreamSend,
+			xrr.StreamScrubInfo{AdapterID: adapterID, Type: typ}, msg)
+		sum := sha256.Sum256(scrubbed)
 		open.Identity["msg_hash"] = hex.EncodeToString(sum[:4])
 	} else {
 		open.Counter = true
@@ -190,7 +199,7 @@ func newRecordStream(ctx context.Context, session *xrr.FileSession, desc *grpc.S
 	// streams are content-addressed by the open message, which grpc-go only
 	// surfaces at the first SendMsg — their open is deferred there.
 	if typ != xrr.StreamServer {
-		rec, err := session.OpenStreamRecord(streamOpen(typ, service, mth, nil))
+		rec, err := session.OpenStreamRecord(streamOpen(session, typ, service, mth, nil))
 		if err != nil {
 			return nil, err
 		}
@@ -213,7 +222,7 @@ func (s *recordStream) ensureOpen(openMsg []byte) (*xrr.StreamRecording, error) 
 	if s.rec != nil {
 		return s.rec, nil
 	}
-	rec, err := s.session.OpenStreamRecord(streamOpen(s.typ, s.service, s.method, openMsg))
+	rec, err := s.session.OpenStreamRecord(streamOpen(s.session, s.typ, s.service, s.method, openMsg))
 	if err != nil {
 		return nil, err
 	}
@@ -351,7 +360,7 @@ func newReplayStream(ctx context.Context, session *xrr.FileSession,
 	// itself. Server streams are located by the request message, so their
 	// open is deferred to the first SendMsg.
 	if typ != xrr.StreamServer {
-		rp, err := session.OpenStreamReplay(streamOpen(typ, service, mth, nil))
+		rp, err := session.OpenStreamReplay(streamOpen(session, typ, service, mth, nil))
 		if err != nil {
 			return nil, err
 		}
@@ -371,7 +380,7 @@ func (s *replayStream) ensureOpen(openMsg []byte) (*xrr.StreamReplay, error) {
 	if s.rp != nil {
 		return s.rp, nil
 	}
-	rp, err := s.session.OpenStreamReplay(streamOpen(s.typ, s.service, s.method, openMsg))
+	rp, err := s.session.OpenStreamReplay(streamOpen(s.session, s.typ, s.service, s.method, openMsg))
 	if err != nil {
 		s.openErr = err
 		return nil, err

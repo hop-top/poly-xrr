@@ -5,11 +5,14 @@
 package xrr_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -378,4 +381,71 @@ func TestE2EGRPCStream_Passthrough(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	assert.Empty(t, entries, "passthrough must not touch the cassette dir")
+}
+
+// TestE2EGRPCStream_ScrubHook — a server stream whose traffic carries a fake
+// token in BOTH directions (the request message and the streamed chunks),
+// the exec-style hazard the spec warns about. Recording through the frame
+// scrub hook must keep the token out of the cassette in any encoding, and
+// replaying the same secret-bearing live traffic through the same hook must
+// be green: the scrubbed open message addresses the same fingerprint on both
+// sides, and the scrubbed live sends match the scrubbed recorded frames.
+func TestE2EGRPCStream_ScrubHook(t *testing.T) {
+	const fakeToken = "FAKE-TOKEN-e2e-0123456789abcdef"
+	// Equal-length mask: frames are protobuf wire bytes, so the scrub must
+	// preserve the encoding structure for replayed frames to unmarshal.
+	mask := strings.Repeat("X", len(fakeToken))
+	scrub := func(_ xrr.StreamDirection, _ xrr.StreamScrubInfo, data []byte) []byte {
+		return bytes.ReplaceAll(data, []byte(fakeToken), []byte(mask))
+	}
+
+	dir := t.TempDir()
+
+	// ── phase 1: record through the scrub against the live server
+	srv, lis := startStreamServer(t)
+	recSession := xrr.NewSessionWithStreamScrub(xrr.ModeRecord, xrr.NewFileCassette(dir), scrub)
+	recConn := streamClientConn(t, recSession, func(ctx context.Context, _ string) (net.Conn, error) {
+		return lis.DialContext(ctx)
+	})
+	recorded := downloadDriver(fakeToken, 0)(t, recConn)
+	require.NoError(t, recConn.Close())
+
+	// The live run sees the real bytes; only the cassette is scrubbed.
+	require.Equal(t, []string{fakeToken + "-chunk-1", fakeToken + "-chunk-2", fakeToken + "-chunk-3"}, recorded.msgs)
+	require.Equal(t, []string{"EOF"}, recorded.errs)
+
+	// ── the cassette on disk carries no trace of the token
+	reqFiles, err := filepath.Glob(filepath.Join(dir, "grpc-*.req.yaml"))
+	require.NoError(t, err)
+	require.Len(t, reqFiles, 1)
+	fp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(reqFiles[0]), "grpc-"), ".req.yaml")
+
+	pair, err := xrr.NewFileCassette(dir).LoadStream("grpc", fp)
+	require.NoError(t, err)
+	frames := append(append([]xrr.StreamFrame{}, pair.Req.Frames...), pair.Resp.Frames...)
+	require.Len(t, frames, 4, "one request frame, three chunks")
+	for _, f := range frames {
+		assert.NotContains(t, string(f.Message), fakeToken, "decoded frame bytes must be scrubbed")
+	}
+	assert.Contains(t, string(pair.Resp.Frames[0].Message), mask+"-chunk-1")
+	for _, kind := range []string{"req", "resp"} {
+		raw, err := os.ReadFile(filepath.Join(dir, "grpc-"+fp+"."+kind+".yaml"))
+		require.NoError(t, err)
+		assert.NotContains(t, string(raw), fakeToken)
+	}
+
+	// ── phase 2: server STOPPED; the same live traffic replays green
+	// through the same hook — scrubbed identity finds the pair, scrubbed
+	// sends match, and the client receives the scrubbed chunks.
+	srv.Stop()
+	require.NoError(t, lis.Close())
+	repSession := xrr.NewSessionWithStreamScrub(xrr.ModeReplay, xrr.NewFileCassette(dir), scrub)
+	repConn := streamClientConn(t, repSession, func(context.Context, string) (net.Conn, error) {
+		return nil, fmt.Errorf("server is down")
+	})
+
+	replayed := downloadDriver(fakeToken, 0)(t, repConn)
+	assert.Equal(t, []string{mask + "-chunk-1", mask + "-chunk-2", mask + "-chunk-3"}, replayed.msgs,
+		"replay delivers the scrubbed recording")
+	assert.Equal(t, []string{"EOF"}, replayed.errs, "no mismatch, no miss: symmetric scrub replays green")
 }

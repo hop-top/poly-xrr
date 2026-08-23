@@ -91,6 +91,7 @@ func (s *FileSession) OpenStreamRecord(open StreamOpen) (*StreamRecording, error
 		typ:         open.Type,
 		reqPayload:  payload,
 		opened:      time.Now(),
+		scrub:       s.streamScrub,
 	}, nil
 }
 
@@ -106,6 +107,7 @@ type StreamRecording struct {
 	typ         StreamType
 	reqPayload  map[string]any
 	opened      time.Time
+	scrub       StreamScrubFunc
 
 	mu        sync.Mutex
 	seq       int
@@ -126,27 +128,46 @@ func (r *StreamRecording) elapsedMs() int64 {
 	return ms
 }
 
-// RecordSend logs one client→server message. Dropped after Finish.
+// scrubFrame applies scrub to data when a hook is installed. Callers own
+// the "scrub exactly once per frame" discipline: record scrubs before
+// persisting, replay scrubs live send bytes before comparison and never
+// re-scrubs recorded frames.
+func scrubFrame(scrub StreamScrubFunc, dir StreamDirection, info StreamScrubInfo, data []byte) []byte {
+	if scrub == nil {
+		return data
+	}
+	return scrub(dir, info, data)
+}
+
+func (r *StreamRecording) scrubInfo() StreamScrubInfo {
+	return StreamScrubInfo{AdapterID: r.adapterID, Type: r.typ}
+}
+
+// RecordSend logs one client→server message, scrubbed by the session's
+// frame scrub hook before it is retained. Dropped after Finish.
 func (r *StreamRecording) RecordSend(message []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.finished {
 		return
 	}
+	msg := bytes.Clone(scrubFrame(r.scrub, StreamSend, r.scrubInfo(), message))
 	at := r.elapsedMs()
-	r.sends = append(r.sends, StreamFrame{Seq: r.seq, Message: bytes.Clone(message), AtMs: &at})
+	r.sends = append(r.sends, StreamFrame{Seq: r.seq, Message: msg, AtMs: &at})
 	r.seq++
 }
 
-// RecordRecv logs one server→client message. Dropped after Finish.
+// RecordRecv logs one server→client message, scrubbed by the session's
+// frame scrub hook before it is retained. Dropped after Finish.
 func (r *StreamRecording) RecordRecv(message []byte) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.finished {
 		return
 	}
+	msg := bytes.Clone(scrubFrame(r.scrub, StreamRecv, r.scrubInfo(), message))
 	at := r.elapsedMs()
-	r.recvs = append(r.recvs, StreamFrame{Seq: r.seq, Message: bytes.Clone(message), AtMs: &at})
+	r.recvs = append(r.recvs, StreamFrame{Seq: r.seq, Message: msg, AtMs: &at})
 	r.seq++
 }
 
@@ -223,7 +244,12 @@ func (s *FileSession) OpenStreamReplay(open StreamOpen) (*StreamReplay, error) {
 		return nil, fmt.Errorf("xrr: recorded stream type %q, requested %q: %w",
 			pair.Req.Type, open.Type, ErrShapeMismatch)
 	}
-	return &StreamReplay{fingerprint: fp, pair: pair}, nil
+	return &StreamReplay{
+		fingerprint: fp,
+		pair:        pair,
+		scrub:       s.streamScrub,
+		info:        StreamScrubInfo{AdapterID: open.AdapterID, Type: open.Type},
+	}, nil
 }
 
 // StreamReplay serves one recorded streamed interaction. Send-side events
@@ -235,6 +261,8 @@ func (s *FileSession) OpenStreamReplay(open StreamOpen) (*StreamReplay, error) {
 type StreamReplay struct {
 	fingerprint string
 	pair        *StreamPair
+	scrub       StreamScrubFunc
+	info        StreamScrubInfo
 
 	mu       sync.Mutex
 	sendIdx  int
@@ -278,6 +306,10 @@ func (r *StreamReplay) fail(m *StreamMismatchError) *StreamMismatchError {
 //     OK terminal Send returns io.EOF (the post-completion stream-done
 //     signal) and does NOT poison the recv side; with an error terminal it
 //     returns the recorded error. Bytes at i ≥ S are never compared.
+//
+// The live bytes are scrubbed by the session's frame scrub hook before the
+// comparison — recorded frames were scrubbed at record time, so symmetric
+// scrubbing is what makes a scrubbed cassette match its live traffic.
 func (r *StreamReplay) Send(message []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -288,6 +320,7 @@ func (r *StreamReplay) Send(message []byte) error {
 	if i >= len(r.pair.Req.Frames) {
 		return r.terminalErr()
 	}
+	message = scrubFrame(r.scrub, StreamSend, r.info, message)
 	recorded := r.pair.Req.Frames[i].Message
 	if !bytes.Equal(message, recorded) {
 		want := sha256.Sum256(recorded)
@@ -322,9 +355,10 @@ func (r *StreamReplay) HalfClose() error {
 	return nil
 }
 
-// Recv delivers the j-th recorded recv frame's bytes. At j = R it returns
-// the terminal — the recorded error or io.EOF — and repeats it for every
-// later read. Recv never blocks on send-side progress.
+// Recv delivers the j-th recorded recv frame's bytes, verbatim: frames were
+// scrubbed at record time and are never re-scrubbed here. At j = R it
+// returns the terminal — the recorded error or io.EOF — and repeats it for
+// every later read. Recv never blocks on send-side progress.
 func (r *StreamReplay) Recv() ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

@@ -377,16 +377,30 @@ reaches terminal (process crash) produces no cassette. Recording a streamed
 interaction whose fingerprint already has files overwrites them (v1
 last-write-wins, unchanged).
 
-**REDACTION WARNING.** Frame payloads (`message_b64` / `message_text`) are
-recorded VERBATIM — every byte of every message, both directions. No
-cassette redaction mechanism exists, at the frame level or otherwise, and
-base64 encoding defeats value-pattern scrubbing applied to the cassette
-text (a secret is unrecognizable in its encoded form). Until a frame-level
-scrub hook exists, adopters MUST NOT record streams that carry secrets.
-Streamed exec stdin/env is the canonical hazard: exec-style streams pipe
-environment maps and stdin into frames, and file transfer implemented over
-exec pipes entire file contents — key material, tokens, dotfiles — into
-the cassette.
+**REDACTION WARNING.** By default, frame payloads
+(`message_b64` / `message_text`) are recorded VERBATIM — every byte of
+every message, both directions — and base64 encoding defeats value-pattern
+scrubbing applied to the cassette text after the fact (a secret is
+unrecognizable in its encoded form). The Go implementation closes this gap
+with a session-level frame scrub hook: a deterministic function over the
+DECODED frame bytes, applied identically at record time (frames scrubbed
+before persistence; content-derived identity such as the gRPC
+server-stream `msg_hash` computed over scrubbed bytes) and at replay time
+(live send bytes and identity derivation scrubbed the same way, so a
+scrubbed recording matches a scrubbed replay of the same traffic).
+Scrubbing is a recorder/replayer implementation feature, not a format
+feature: a scrubbed cassette is an ordinary cassette that happens to
+contain scrubbed bytes — no envelope field, no algorithm change, nothing
+for other readers to implement. Symmetry is load-bearing: the SAME hook
+MUST be active when recording and when replaying a scrubbed cassette
+(replay without it fails loudly as a stream mismatch), and the hook MUST
+be deterministic — nondeterministic scrubbing diverges content-addressed
+fingerprints and send validation. Ports without the hook still record
+verbatim (rollout tracked separately); on those implementations adopters
+MUST NOT record streams that carry secrets. Streamed exec stdin/env is the
+canonical hazard: exec-style streams pipe environment maps and stdin into
+frames, and file transfer implemented over exec pipes entire file
+contents — key material, tokens, dotfiles — into the cassette.
 
 **Passthrough.** Unchanged: live calls, cassette untouched.
 

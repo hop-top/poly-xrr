@@ -116,9 +116,13 @@ byte-for-byte and serves received messages in recorded order, ending with
 the recorded terminal (end-of-stream or the original status error). Full
 semantics: [spec/cassette-format-streaming.md](spec/cassette-format-streaming.md).
 
-- **Frames record verbatim.** There is no redaction for stream frames —
-  don't tape secret-bearing streams (exec-style stdin/env is the classic
-  trap).
+- **Frames record verbatim unless you install the scrub hook.** The Go
+  port's `NewSessionWithStreamScrub` takes a deterministic function over
+  decoded frame bytes, applied identically at record and replay (base64
+  makes after-the-fact cassette scrubbing impossible — the hook is the
+  only seam). Install the same hook on the recording and replaying
+  session. Other ports have no hook yet: don't tape secret-bearing
+  streams there (exec-style stdin/env is the classic trap).
 - **Format is portable, adapter is Go-only today.** ts / py / rs / php
   read and write streamed cassettes (format layer); only the Go port
   ships the streaming interceptor.
