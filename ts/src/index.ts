@@ -63,6 +63,8 @@ export type { FsOp, FsRequest, FsResponse } from "./adapters/fs.js";
 export {
   GrpcAdapterError,
   GrpcStreamAdapter,
+  drain,
+  drainCall,
   splitFullMethod,
   streamTypeOf,
 } from "./adapters/grpc.js";

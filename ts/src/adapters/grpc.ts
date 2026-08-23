@@ -239,6 +239,7 @@ export class GrpcStreamAdapter {
       service,
       method,
       path: md.path,
+      responseStream: md.responseStream,
       requestSerialize: (v) => bytesOf(md.requestSerialize(v)),
       responseSerialize: (v) => bytesOf(responseSerialize(v)),
       responseDeserialize: (b) => md.responseDeserialize(Buffer.from(b)),
@@ -250,6 +251,8 @@ interface MethodCodec {
   service: string;
   method: string;
   path: string;
+  /** Mirrors the method definition's responseStream flag. */
+  responseStream: boolean;
   requestSerialize(value: unknown): Uint8Array;
   responseSerialize(value: unknown): Uint8Array;
   responseDeserialize(bytes: Uint8Array): unknown;
@@ -298,6 +301,22 @@ function streamOpen(
   return open;
 }
 
+
+/**
+ * Internal drain hook: resolves once every queued record/replay step has
+ * settled. grpc-js's call surface is synchronous while cassette IO is not,
+ * so the adapter serializes its work on an internal chain; tests that drive
+ * a call directly (rather than through a real client's IO) await this to
+ * observe a settled call. Not part of the public API.
+ */
+export const drainCall = Symbol("xrr.grpc.drain");
+
+/** Awaits a call's internal chain when it exposes the drain hook. */
+export async function drain(call: unknown): Promise<void> {
+  const fn = (call as Record<symbol, unknown>)?.[drainCall];
+  if (typeof fn === "function") await (fn as () => Promise<unknown>)();
+}
+
 // ── record ─────────────────────────────────────────────────────────────────
 
 /**
@@ -312,6 +331,17 @@ class RecordCall implements GrpcCall {
   /** Serializes the async record chain so frames keep their arrival order. */
   private tail: Promise<unknown> = Promise.resolve();
   private pendingError: unknown = null;
+
+  /** See drainCall: settles once every queued recording step has run. */
+  [drainCall] = async (): Promise<void> => {
+    let previous: unknown;
+    // The chain grows while it drains (a step can queue another), so settle
+    // repeatedly until it stops changing.
+    do {
+      previous = this.tail;
+      await this.tail;
+    } while (this.tail !== previous);
+  };
 
   constructor(
     private readonly session: FileSession,
@@ -356,6 +386,13 @@ class RecordCall implements GrpcCall {
     this.live.start(metadata, {
       onReceiveMetadata: (md) => listener?.onReceiveMetadata?.(md),
       onReceiveMessage: (message) => {
+        // grpc-js synthesizes onReceiveMessage(null) for unary-response
+        // calls that end without a message (its BaseUnaryInterceptingCall);
+        // that is a terminal marker, not a frame, and must not be recorded.
+        if (message == null) {
+          listener?.onReceiveMessage?.(message);
+          return;
+        }
         // The live message is recorded as wire bytes and forwarded
         // untouched: the caller must observe exactly what the server sent.
         const bytes = this.codec.responseSerialize(message);
@@ -446,8 +483,19 @@ class ReplayCall implements GrpcCall {
   private listener: GrpcListener | null = null;
   private done = false;
   private started = false;
+  /** Whether any recv frame reached the listener (unary-response bookkeeping). */
+  private deliveredMessage = false;
   /** Serializes the async replay chain so events keep their order. */
   private tail: Promise<unknown> = Promise.resolve();
+
+  /** See drainCall: settles once every queued replay step has run. */
+  [drainCall] = async (): Promise<void> => {
+    let previous: unknown;
+    do {
+      previous = this.tail;
+      await this.tail;
+    } while (this.tail !== previous);
+  };
 
   constructor(
     private readonly session: FileSession,
@@ -489,18 +537,13 @@ class ReplayCall implements GrpcCall {
     this.started = true;
     this.listener = listener ?? null;
     listener?.onReceiveMetadata?.(new this.runtime.Metadata());
-    if (!this.codec.path || !this.type) return;
-    // grpc-js drives reads itself for unary-response methods (its bottom
-    // call calls startRead() from start()); mirror that so a
-    // client-streaming call completes without the caller reading.
-    if (this.type === "client") this.startRead();
   }
 
   sendMessage(message: unknown): void {
     this.sendMessageWithContext({}, message);
   }
 
-  sendMessageWithContext(_context: unknown, message: unknown): void {
+  sendMessageWithContext(context: unknown, message: unknown): void {
     const bytes = this.codec.requestSerialize(message);
     void this.ensureOpen(bytes).catch(() => undefined);
     this.queue((rp) => {
@@ -510,14 +553,27 @@ class ReplayCall implements GrpcCall {
         // Post-terminal sends on an OK recording are the canonical
         // "produce until the stream reports done" pattern: the recorder
         // dropped them, so they must not poison the recv side.
-        if (err === ErrEndOfStream) return;
-        throw err;
+        if (err !== ErrEndOfStream) throw err;
+      } finally {
+        // Write flow control: grpc-js's writable stream passes its `_write`
+        // callback on the message context and stalls until the bottom call
+        // invokes it (as the real subchannel call does once the message is
+        // accepted). Without this a client-streaming call delivers only its
+        // first message.
+        writeCallbackOf(context)?.();
       }
     });
   }
 
   halfClose(): void {
     this.queue((rp) => rp.halfClose());
+    // grpc-js drives the read itself for unary-response methods (its bottom
+    // call calls startRead() from start()); mirror that so a
+    // client-streaming call completes without the caller reading. It is
+    // driven from half-close rather than from start so that the recorded
+    // sends are validated FIRST — reading at start would deliver the
+    // terminal before a divergent send could be caught.
+    if (!this.codec.responseStream) this.startRead();
   }
 
   startRead(): void {
@@ -534,6 +590,7 @@ class ReplayCall implements GrpcCall {
         }
         throw err;
       }
+      this.deliveredMessage = true;
       this.listener?.onReceiveMessage?.(this.codec.responseDeserialize(bytes));
     });
   }
@@ -545,6 +602,14 @@ class ReplayCall implements GrpcCall {
   private terminate(status: GrpcStatus): void {
     if (this.done) return;
     this.done = true;
+    // grpc-js's own unary-response bottom call synthesizes a null message
+    // when a call ends without one, and its ClientUnaryCall relies on that
+    // to settle. Mirror it, or a client-streaming call that terminates
+    // before its response frame (a mismatch, a miss, a recorded error)
+    // hangs instead of surfacing the status.
+    if (!this.codec.responseStream && !this.deliveredMessage) {
+      this.listener?.onReceiveMessage?.(null);
+    }
     this.listener?.onReceiveStatus?.({ ...status, metadata: new this.runtime.Metadata() });
   }
 
@@ -585,6 +650,18 @@ class ReplayCall implements GrpcCall {
   getAuthContext(): unknown {
     return null;
   }
+}
+
+/**
+ * Recovers the writable stream's `_write` callback from a grpc-js message
+ * context, when one is present (it is absent for direct sendMessage calls).
+ */
+function writeCallbackOf(context: unknown): (() => void) | undefined {
+  if (context && typeof context === "object" && "callback" in context) {
+    const cb = (context as { callback: unknown }).callback;
+    if (typeof cb === "function") return cb as () => void;
+  }
+  return undefined;
 }
 
 /**

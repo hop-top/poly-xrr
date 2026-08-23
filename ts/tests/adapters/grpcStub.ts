@@ -21,6 +21,7 @@ import type {
   GrpcRuntime,
   GrpcStatus,
 } from "../../src/adapters/grpc.js";
+import { drain, drainCall } from "../../src/adapters/grpc.js";
 import type { StreamType } from "../../src/stream.js";
 
 /** grpc-js `Metadata` stand-in: the format records none, so it stays empty. */
@@ -50,6 +51,9 @@ export function byteCodec(path: string, type: StreamType): GrpcMethodDefinition 
  */
 export class StubInterceptingCall implements GrpcCall {
   constructor(private readonly inner: GrpcCall) {}
+
+  /** Forwards the adapter's drain hook through the wrapper. */
+  [drainCall] = (): Promise<void> => drain(this.inner);
 
   start(metadata: unknown, listener?: GrpcListener): void {
     this.inner.start(metadata, listener);
@@ -100,13 +104,15 @@ export class TestCall implements GrpcCall {
   }
 
   /**
-   * Lets the adapter's internal async chains run to completion. They
-   * include real file IO (cassette loads), so draining needs macrotask
-   * turns, not just microtask ticks — the real client gets this for free by
-   * awaiting the network.
+   * Waits for the adapter's internal async chain to settle. The real client
+   * gets this for free by awaiting network IO; driving a call directly needs
+   * the adapter's own drain hook, so waiting is deterministic rather than a
+   * guessed number of event-loop turns.
    */
   async settle(): Promise<void> {
-    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+    await drain(this.inner);
+    await new Promise((r) => setImmediate(r));
+    await drain(this.inner);
   }
 
   start(metadata: unknown, listener?: GrpcListener): void {
@@ -167,9 +173,21 @@ export async function drive(
   if (opts.halfClose) call.halfClose();
   await call.settle();
 
-  for (let i = 0; i < opts.reads && status === null; i++) {
-    call.startRead();
-    await call.settle();
+  // Unary-response methods are driven by the adapter itself at half-close
+  // (mirroring grpc-js's own bottom call), so an extra startRead here would
+  // race that read rather than sequence after it.
+  if (md.responseStream) {
+    for (let i = 0; i < opts.reads && status === null; i++) {
+      call.startRead();
+      await call.settle();
+    }
+  } else {
+    // Give the adapter-driven read time to land, then drive any further
+    // reads a caller would make.
+    for (let i = 0; i < opts.reads && status === null; i++) {
+      if (i > 0) call.startRead();
+      await call.settle();
+    }
   }
   await call.settle();
   return { messages, status };
