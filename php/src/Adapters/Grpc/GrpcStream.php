@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace HopTop\Xrr\Adapters\Grpc;
 
 use HopTop\Xrr\Session;
+use HopTop\Xrr\Stream\StreamDirection;
 use HopTop\Xrr\Stream\StreamFingerprint;
 use HopTop\Xrr\Stream\StreamOpen;
 use HopTop\Xrr\Stream\StreamType;
