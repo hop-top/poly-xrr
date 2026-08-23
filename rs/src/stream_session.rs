@@ -23,6 +23,7 @@ use crate::{
         stream_fingerprint, Frame, MessageEncoding, ReqStream, RespStream, StreamEvent,
         StreamOpen, StreamType, StreamedPair, StreamedReq, StreamedResp,
     },
+    stream_scrub::{scrub_frame, StreamDirection, StreamScrub, StreamScrubInfo},
 };
 
 impl Session {
@@ -65,8 +66,14 @@ impl Session {
             // never read back to drive matching.
             req_payload.insert(Value::String("n".into()), Value::Number(n.into()));
         }
+        let scrub_info = StreamScrubInfo {
+            adapter_id: open.adapter_id.clone(),
+            stream_type: open.stream_type,
+        };
         Ok(StreamRecording {
             cassette: self.cassette(),
+            scrub: self.stream_scrub().cloned(),
+            scrub_info,
             adapter_id: open.adapter_id,
             fingerprint,
             stream_type: open.stream_type,
@@ -94,7 +101,18 @@ impl Session {
                 open.stream_type.as_str()
             )));
         }
-        Ok(StreamReplay { fingerprint, pair, send_idx: 0, recv_idx: 0, mismatch: None })
+        Ok(StreamReplay {
+            fingerprint,
+            pair,
+            send_idx: 0,
+            recv_idx: 0,
+            mismatch: None,
+            scrub: self.stream_scrub().cloned(),
+            scrub_info: StreamScrubInfo {
+                adapter_id: open.adapter_id,
+                stream_type: open.stream_type,
+            },
+        })
     }
 }
 
@@ -106,6 +124,10 @@ impl Session {
 /// arrival order.
 pub struct StreamRecording<'s> {
     cassette: &'s FileCassette,
+    /// Frame scrub hook: applied to every frame, both directions, before
+    /// the bytes are persisted.
+    scrub: Option<StreamScrub>,
+    scrub_info: StreamScrubInfo,
     adapter_id: String,
     fingerprint: String,
     stream_type: StreamType,
@@ -129,10 +151,10 @@ impl StreamRecording<'_> {
         u64::try_from(self.opened.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 
-    fn frame(&mut self, message: &[u8]) -> Frame {
+    fn frame(&mut self, dir: StreamDirection, message: &[u8]) -> Frame {
         let frame = Frame {
             seq: self.seq,
-            bytes: message.to_vec(),
+            bytes: scrub_frame(self.scrub.as_ref(), dir, &self.scrub_info, message),
             encoding: MessageEncoding::B64,
             at_ms: Some(self.elapsed_ms()),
         };
@@ -145,7 +167,7 @@ impl StreamRecording<'_> {
         if self.finished {
             return;
         }
-        let frame = self.frame(message);
+        let frame = self.frame(StreamDirection::Send, message);
         self.sends.push(frame);
     }
 
@@ -154,7 +176,7 @@ impl StreamRecording<'_> {
         if self.finished {
             return;
         }
-        let frame = self.frame(message);
+        let frame = self.frame(StreamDirection::Recv, message);
         self.recvs.push(frame);
     }
 
@@ -227,7 +249,6 @@ struct Mismatch {
 /// in `seq` order, never gated on send progress. Timing is ignored: frames
 /// are delivered as fast as the client consumes them (`at_ms` stays
 /// available on the loaded pair for a future opt-in replay-timing mode).
-#[derive(Debug)]
 pub struct StreamReplay {
     fingerprint: String,
     pair: StreamedPair,
@@ -235,6 +256,26 @@ pub struct StreamReplay {
     send_idx: usize,
     recv_idx: usize,
     mismatch: Option<Mismatch>,
+    /// Frame scrub hook: applied to LIVE send bytes before comparison.
+    /// Recorded frames were already scrubbed at record time and are
+    /// delivered verbatim — never re-scrubbed.
+    scrub: Option<StreamScrub>,
+    scrub_info: StreamScrubInfo,
+}
+
+// Hand-written: the scrub hook is a closure and cannot derive Debug.
+impl std::fmt::Debug for StreamReplay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamReplay")
+            .field("fingerprint", &self.fingerprint)
+            .field("pair", &self.pair)
+            .field("send_idx", &self.send_idx)
+            .field("recv_idx", &self.recv_idx)
+            .field("mismatch", &self.mismatch)
+            .field("scrub", &self.scrub.as_ref().map(|_| "<hook>"))
+            .field("scrub_info", &self.scrub_info)
+            .finish()
+    }
 }
 
 impl StreamReplay {
@@ -299,6 +340,14 @@ impl StreamReplay {
         if i >= self.pair.req.stream.frames.len() {
             return Err(self.terminal());
         }
+        // Live send bytes pass through the same hook the recording was
+        // written with, so a scrubbed cassette matches a scrubbed replay.
+        let message = &scrub_frame(
+            self.scrub.as_ref(),
+            StreamDirection::Send,
+            &self.scrub_info,
+            message,
+        )[..];
         if message != self.pair.req.stream.frames[i].bytes.as_slice() {
             let want = hex::encode(Sha256::digest(&self.pair.req.stream.frames[i].bytes));
             let got = hex::encode(Sha256::digest(message));

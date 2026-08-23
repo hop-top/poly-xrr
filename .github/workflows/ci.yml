@@ -75,3 +75,6 @@ jobs:
       - name: Test
         working-directory: rs
         run: cargo test
+      - name: Test (grpc adapter)
+        working-directory: rs
+        run: cargo test --features grpc
