@@ -34,6 +34,23 @@
 //     terminate TLS below the tap.
 //   - Uncompressed messages only. grpc-encoding other than identity is
 //     refused rather than silently mis-recorded.
+//   - The client must let you supply the dialer. This seam is far more
+//     commonly available than an interceptor, but it is not universal: a
+//     library that hardcodes its own grpc.NewClient options exposes
+//     neither. Such a client needs an upstream change (accept a
+//     grpc.DialOption, or honour one), a proxy in front of it, or capture
+//     at a different layer entirely.
+//
+// # HTTP/2 version sensitivity
+//
+// Decoding is tied to HTTP/2 framing and to gRPC's length-prefixed message
+// format, both of which are stable, versioned wire protocols — not to any
+// grpc-go internals. Upgrading grpc-go does not affect this package.
+// Frame types this adapter does not understand are skipped as noise rather
+// than treated as errors, so protocol extensions degrade gracefully.
+// A move to HTTP/3 (QUIC) would be a different transport and would need a
+// separate decoder; nothing here would silently mis-record it, because the
+// preface and framing would not parse.
 package grpctransport
 
 import (
