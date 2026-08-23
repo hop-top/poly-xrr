@@ -62,7 +62,8 @@ payload:                      # adapter-specific — required, MUST be an object
 |-------|--------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | error | string | Recorded error message from the original interaction. If present and non-empty, replay MUST re-emit a non-nil error alongside the response payload. Empty or absent ⇒ success. Recordings written before this field existed replay as success. **`.req.yaml` MUST NOT carry this field.** |
 
-Any other additional top-level fields are ignored by loaders (forward compat).
+On both `.req.yaml` and `.resp.yaml`, any other additional top-level fields
+are ignored by loaders (forward compat).
 
 ## Request Envelope Example (exec)
 
@@ -267,6 +268,17 @@ payload:
 
 On replay, the session re-emits a non-nil error whose `Error()` string equals
 the recorded `error` field, alongside the deserialized response payload.
+
+## Streamed Interactions
+
+Streamed interactions (gRPC server/client/bidi streams) are a v1-additive
+extension: the same envelope, file layout, and naming, plus an optional
+top-level `stream` field carrying an ordered frame log. Pre-streaming
+loaders ignore the field per the forward-compat rule above, and streaming
+fingerprints are disjoint from unary ones, so existing cassettes and
+loaders are unaffected. Full schema, fingerprint algorithms, replay
+semantics, and conformance obligations:
+[cassette-format-streaming.md](cassette-format-streaming.md).
 
 ## Cross-Language Conformance
 
