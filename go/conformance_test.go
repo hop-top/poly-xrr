@@ -86,6 +86,14 @@ func conformStreamedPair(t *testing.T, c *xrr.FileCassette, adapter, fingerprint
 // the pair's open-time inputs: the single send frame for server streams, the
 // recorded occurrence ordinal for client/bidi. Reading the informational
 // payload n is a conformance-only device — replay recomputes its own counter.
+//
+// This derives n from each pair's own payload rather than from a counter
+// shared across the dir, so the loop above needs no ordering: the manifest's
+// order cannot affect any result. That satisfies the spec's ordering rule
+// (cassette-format-streaming.md, Manifest Extension) vacuously — there is no
+// shared counter for a wrong order to desynchronise.
+// TestConformanceManifestOrderIrrelevant pins that property so it cannot
+// regress into an order dependence silently.
 func recomputeGRPCStreamFingerprint(t *testing.T, pair *xrr.StreamPair) string {
 	t.Helper()
 	service, _ := pair.ReqPayload["service"].(string)
@@ -162,4 +170,52 @@ func TestConformanceClientStreamRepeat(t *testing.T) {
 	assert.Equal(t, []byte(`{"received_bytes":14}`), msg)
 	_, err = rep2.Recv()
 	assert.ErrorIs(t, err, io.EOF)
+}
+
+// TestConformanceManifestOrderIrrelevant pins the property that makes the
+// manifest ordering rule (cassette-format-streaming.md, Manifest Extension)
+// hold here: `interactions` is an unordered set, so reversing a manifest's
+// entries must not change any conformance result. Go recomputes each pair's
+// occurrence n from that pair's own payload rather than from a counter shared
+// across the dir, so it is order-independent by construction — this test keeps
+// that construction from silently regressing into a shared-counter loop, where
+// a wrong order would assign entries each other's n and miss.
+func TestConformanceManifestOrderIrrelevant(t *testing.T) {
+	fixtures := filepath.Join("..", "spec", "fixtures")
+	entries, err := os.ReadDir(fixtures)
+	require.NoError(t, err)
+
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		e := e
+		t.Run(e.Name(), func(t *testing.T) {
+			dir := filepath.Join(fixtures, e.Name())
+			data, err := os.ReadFile(filepath.Join(dir, "manifest.yaml"))
+			require.NoError(t, err)
+
+			var m manifest
+			require.NoError(t, yaml.Unmarshal(data, &m))
+
+			// Reverse the manifest: a legal edit under the ordering rule.
+			reversed := m.Interactions
+			for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
+				reversed[i], reversed[j] = reversed[j], reversed[i]
+			}
+
+			c := xrr.NewFileCassette(dir)
+			for _, interaction := range reversed {
+				if interaction.Streamed {
+					conformStreamedPair(t, c, interaction.Adapter, interaction.Fingerprint)
+					continue
+				}
+				var reqPayload, respPayload map[string]any
+				_, err := c.Load(interaction.Adapter, interaction.Fingerprint, &reqPayload, &respPayload)
+				assert.NoError(t, err,
+					"cassette miss under reversed manifest: adapter=%s fp=%s",
+					interaction.Adapter, interaction.Fingerprint)
+			}
+		})
+	}
 }
