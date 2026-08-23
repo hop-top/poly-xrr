@@ -13,6 +13,12 @@ pub enum XrrError {
 
     #[error("xrr: json error: {0}")]
     Json(#[from] serde_json::Error),
+
+    #[error("xrr: invalid stream cassette: {0}")]
+    InvalidStream(String),
+
+    #[error("xrr: stream shape mismatch: {0}")]
+    ShapeMismatch(String),
 }
 
 #[cfg(test)]

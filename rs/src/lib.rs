@@ -1,7 +1,10 @@
 pub mod adapters;
+mod b64;
 pub mod cassette;
 pub mod error;
 pub mod session;
+pub mod stream;
+mod stream_fingerprint;
 
 pub use cassette::FileCassette;
 pub use error::XrrError;
