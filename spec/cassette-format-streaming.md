@@ -381,26 +381,96 @@ last-write-wins, unchanged).
 (`message_b64` / `message_text`) are recorded VERBATIM — every byte of
 every message, both directions — and base64 encoding defeats value-pattern
 scrubbing applied to the cassette text after the fact (a secret is
-unrecognizable in its encoded form). The Go implementation closes this gap
-with a session-level frame scrub hook: a deterministic function over the
-DECODED frame bytes, applied identically at record time (frames scrubbed
-before persistence; content-derived identity such as the gRPC
-server-stream `msg_hash` computed over scrubbed bytes) and at replay time
-(live send bytes and identity derivation scrubbed the same way, so a
-scrubbed recording matches a scrubbed replay of the same traffic).
-Scrubbing is a recorder/replayer implementation feature, not a format
-feature: a scrubbed cassette is an ordinary cassette that happens to
-contain scrubbed bytes — no envelope field, no algorithm change, nothing
-for other readers to implement. Symmetry is load-bearing: the SAME hook
-MUST be active when recording and when replaying a scrubbed cassette
-(replay without it fails loudly as a stream mismatch), and the hook MUST
-be deterministic — nondeterministic scrubbing diverges content-addressed
-fingerprints and send validation. Ports without the hook still record
-verbatim (rollout tracked separately); on those implementations adopters
-MUST NOT record streams that carry secrets. Streamed exec stdin/env is the
-canonical hazard: exec-style streams pipe environment maps and stdin into
-frames, and file transfer implemented over exec pipes entire file
-contents — key material, tokens, dotfiles — into the cassette.
+unrecognizable in its encoded form). Implementations close this gap with a
+session-level **frame scrub hook**, specified normatively below. Streamed
+exec stdin/env is the canonical hazard: exec-style streams pipe environment
+maps and stdin into frames, and file transfer implemented over exec pipes
+entire file contents — key material, tokens, dotfiles — into the cassette.
+An implementation that does not offer the hook records verbatim; adopters
+on such an implementation MUST NOT record streams that carry secrets.
+
+### Frame Scrub Hook
+
+Scrubbing is a recorder/replayer feature, NOT a format feature. A scrubbed
+cassette is an ordinary cassette that happens to contain scrubbed bytes:
+there is no envelope field, no algorithm change, and nothing for a reader
+to detect or implement. A reader MUST NOT be able to distinguish a scrubbed
+cassette from an unscrubbed one, and this section adds no key to any file.
+
+An implementation that offers the hook MUST conform to the following. The
+hook is a caller-supplied function of the frame's direction (`send` /
+`recv`), an identity context, and the frame's bytes, returning the bytes to
+use in place of the input.
+
+1. **Decoded bytes.** The hook MUST receive and return the DECODED frame
+   bytes — the same octets that `message_b64` decodes to, or that
+   `message_text` denotes. It MUST NOT be handed base64 text, YAML, or any
+   transport encoding. Whether a frame is later written as `message_b64` or
+   `message_text` is decided AFTER scrubbing, from the scrubbed bytes, per
+   the encoding rules above.
+
+2. **Invocation points.** The hook MUST be invoked at exactly these points,
+   exactly once per frame per point, and MUST NOT be invoked anywhere else:
+
+   | Mode   | Point                                    | Direction |
+   |--------|------------------------------------------|-----------|
+   | record | each client→server frame, before persist | `send`    |
+   | record | each server→client frame, before persist | `recv`    |
+   | replay | each live send, before byte comparison   | `send`    |
+   | both   | content-derived identity input (below)   | `send`    |
+
+   Events without a payload — half-close and the terminal — carry no bytes
+   and MUST NOT be scrubbed. Adapter payload maps (the open request and
+   terminal response objects) are structured named-field data, the domain
+   of record-time field redaction, and are likewise outside this hook.
+
+3. **Content-derived identity.** Where an adapter derives an identity input
+   from message bytes — the gRPC server-stream `msg_hash` is the only such
+   input in this spec — that derivation MUST be computed over the SCRUBBED
+   bytes, in record and replay mode alike. A scrubbed recording and a
+   scrubbed replay of the same live traffic therefore resolve to the same
+   fingerprint. The message handed to the recorder is passed unscrubbed:
+   the core applies the hook itself, so the adapter MUST NOT pre-scrub a
+   frame it also hands to the core (that would scrub it twice).
+
+4. **Determinism.** The hook MUST be deterministic and free of observable
+   side effects: identical input bytes MUST produce identical output bytes
+   across calls, runs, and processes, regardless of how many times or in
+   what order it is invoked. Nondeterministic scrubbing (counters,
+   timestamps, randomized placeholders) diverges content-addressed
+   fingerprints and send validation, and MUST NOT be used. Because the hook
+   is required to be deterministic, an implementation MAY invoke it in a
+   different order than another implementation without affecting the
+   cassette; conforming hooks MUST NOT depend on invocation count or order.
+
+5. **Symmetry.** The SAME hook MUST be active on the session that records a
+   cassette and on every session that replays it. Replay applies the hook
+   to live send bytes only; recorded frames were already scrubbed at record
+   time and MUST be delivered to the caller verbatim — an implementation
+   MUST NOT re-scrub bytes loaded from a cassette, on either side. Replaying
+   a scrubbed cassette with no hook, or with a hook that differs from the
+   recording one, MUST fail loudly as a stream mismatch (or a cassette miss,
+   when the divergence falls in a content-derived identity input); it MUST
+   NOT silently succeed.
+
+6. **Length.** The hook MAY return bytes of a different length than it
+   received, and MAY return the input unchanged. Implementations MUST NOT
+   assume length is preserved. Callers SHOULD nevertheless prefer
+   equal-length replacement for frames carrying an encoded payload
+   (protobuf wire bytes, for example): a replayed `recv` frame is decoded by
+   the client, so a scrub that corrupts the encoding produces a cassette
+   that replays but cannot be parsed. A caller that must change length
+   SHOULD decode, edit, and deterministically re-encode instead.
+
+7. **Absent hook.** When no hook is installed, frames MUST record and replay
+   verbatim and content-derived identity MUST be computed over the raw
+   bytes — behaviour identical to an implementation without the feature.
+
+8. **Ownership.** An implementation MUST NOT retain a reference to a
+   caller-owned input buffer, and MUST NOT let a caller mutate stored frame
+   bytes through the value the hook returned or through a value returned by
+   replay. In languages where byte buffers are mutable, this requires
+   copying at the storage and delivery boundaries.
 
 **Passthrough.** Unchanged: live calls, cassette untouched.
 
