@@ -297,7 +297,10 @@ Format-layer requirements (all adapters):
   tuple, incremented at each open, and counted identically in record and
   replay modes. Determinism therefore assumes the test opens streams of a
   given key in a deterministic order — the same assumption v1 makes about
-  issuing identical unary requests.
+  issuing identical unary requests. Concurrent opens of the SAME
+  `(service, method, type)` tuple within one session make `n` assignment
+  order nondeterministic; tests MUST sequence same-tuple opens
+  deterministically (concurrent opens of distinct tuples are unaffected).
 
 **Cross-process warning.** In the cross-process adoption model (a parent
 sets the cassette dir; N child processes each construct their own session
@@ -370,7 +373,33 @@ reaches terminal (process crash) produces no cassette. Recording a streamed
 interaction whose fingerprint already has files overwrites them (v1
 last-write-wins, unchanged).
 
+**REDACTION WARNING.** Frame payloads (`message_b64` / `message_text`) are
+recorded VERBATIM — every byte of every message, both directions. No
+cassette redaction mechanism exists, at the frame level or otherwise, and
+base64 encoding defeats value-pattern scrubbing applied to the cassette
+text (a secret is unrecognizable in its encoded form). Until a frame-level
+scrub hook exists, adopters MUST NOT record streams that carry secrets.
+Streamed exec stdin/env is the canonical hazard: exec-style streams pipe
+environment maps and stdin into frames, and file transfer implemented over
+exec pipes entire file contents — key material, tokens, dotfiles — into
+the cassette.
+
 **Passthrough.** Unchanged: live calls, cassette untouched.
+
+## Practical Limits (Non-Normative)
+
+Cassettes are YAML committed to git, and `message_b64` inflates binary
+frames by 4/3 — a streamed transfer of even a few MB produces a diff no
+reviewer reads and a repo that only grows. Guidance:
+
+- Do not record bulk-transfer streams. Record a truncated or representative
+  exchange instead, or fake the transfer behind an interface and record
+  only the control traffic around it.
+- Keep individual cassettes in the low hundreds of KB.
+- Prefer `message_text` for textual frames where the adapter mapping
+  allows it — it diffs and reviews like the prose it is (gRPC frames are
+  wire bytes and MUST stay `message_b64`; this applies to future textual
+  channels such as SSE).
 
 ## Validation Rules
 
@@ -419,6 +448,18 @@ Mapping constraints (readers SHOULD verify, writers MUST satisfy):
 
 Frames carry protobuf wire bytes. gRPC writers MUST use `message_b64` and
 MUST NOT use `message_text`.
+
+**Deterministic serialization.** Byte-level send validation and
+content-addressed server-stream fingerprints presume that the recording and
+the replaying runtime marshal the same message to identical bytes.
+Recorders MUST use deterministic marshal options where the runtime offers
+them (for protobuf: sorted map-entry ordering — map entries have no
+specified wire order, and several runtimes randomize it per call, so the
+same message otherwise marshals to different bytes between record and
+replay). This extends the cross-runtime caveat v1's unary `msg_hash`
+already carries: serialization that is not byte-stable across runs or
+runtimes breaks matching, for streams at every send frame and at the
+server-stream open.
 
 ### Request Payload
 
