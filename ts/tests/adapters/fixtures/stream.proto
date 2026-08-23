@@ -1,0 +1,18 @@
+// Test service for the gRPC streaming adapter e2e: one method per stream
+// shape, all carrying a single text field so frames stay small and legible.
+syntax = "proto3";
+
+package xrrtest;
+
+message Chunk {
+  string text = 1;
+}
+
+service StreamService {
+  // server-streaming: one request, N chunks back.
+  rpc Download (Chunk) returns (stream Chunk);
+  // client-streaming: N chunks up, one response.
+  rpc Upload (stream Chunk) returns (Chunk);
+  // bidi: N up, N down.
+  rpc Converse (stream Chunk) returns (stream Chunk);
+}

@@ -33,6 +33,8 @@ export {
   streamFingerprint,
 } from "./streamfp.js";
 export type { StreamOpen } from "./streamfp.js";
+export { scrubFrame } from "./streamScrub.js";
+export type { StreamDirection, StreamScrubFn, StreamScrubInfo } from "./streamScrub.js";
 export {
   ErrEndOfStream,
   StreamMismatchError,
@@ -58,3 +60,22 @@ export { SqlAdapter } from "./adapters/sql.js";
 export type { SqlRequest, SqlResponse } from "./adapters/sql.js";
 export { FsAdapter } from "./adapters/fs.js";
 export type { FsOp, FsRequest, FsResponse } from "./adapters/fs.js";
+export {
+  GrpcAdapterError,
+  GrpcStreamAdapter,
+  drain,
+  drainCall,
+  splitFullMethod,
+  streamTypeOf,
+} from "./adapters/grpc.js";
+export type {
+  GrpcCall,
+  GrpcInterceptor,
+  GrpcInterceptorOptions,
+  GrpcListener,
+  GrpcMethodDefinition,
+  GrpcNextCall,
+  GrpcRuntime,
+  GrpcServiceDefinition,
+  GrpcStatus,
+} from "./adapters/grpc.js";

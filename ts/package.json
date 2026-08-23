@@ -11,6 +11,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@grpc/grpc-js": "^1.14.4",
+    "@grpc/proto-loader": "^0.8.1",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.0.0",
     "eslint": "^10.1.0",
@@ -30,5 +32,13 @@
     "SECURITY.md",
     "README.md"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "peerDependencies": {
+    "@grpc/grpc-js": ">=1.9.0"
+  },
+  "peerDependenciesMeta": {
+    "@grpc/grpc-js": {
+      "optional": true
+    }
+  }
 }

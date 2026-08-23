@@ -16,6 +16,11 @@ import type {
   StreamType,
   StreamedInteraction,
 } from "./stream.js";
+import {
+  type StreamScrubFn,
+  type StreamScrubInfo,
+  scrubFrame,
+} from "./streamScrub.js";
 
 /**
  * End-of-stream signal (the io.EOF analogue): thrown by recv past the last
@@ -85,8 +90,18 @@ export class StreamRecording {
     /** The open-time fingerprint of this interaction. */
     readonly fingerprint: string,
     private readonly type: StreamType,
-    private readonly reqPayload: Record<string, unknown>
+    private readonly reqPayload: Record<string, unknown>,
+    /**
+     * Session frame scrub hook. Every frame passes through it before it is
+     * retained, so a secret never reaches the cassette. Absent ⇒ frames
+     * record verbatim.
+     */
+    private readonly scrub?: StreamScrubFn
   ) {}
+
+  private scrubInfo(): StreamScrubInfo {
+    return { adapterID: this.adapterID, type: this.type };
+  }
 
   private elapsedMs(): number {
     return Math.max(0, Math.floor(performance.now() - this.opened));
@@ -96,16 +111,22 @@ export class StreamRecording {
     return { seq: this.seq++, message: message.slice(), encoding: "b64", at_ms: this.elapsedMs() };
   }
 
-  /** Logs one client→server message. Dropped after finish. */
+  /**
+   * Logs one client→server message, scrubbed by the session's frame scrub
+   * hook before it is retained. Dropped after finish.
+   */
   recordSend(message: Uint8Array): void {
     if (this.finished) return;
-    this.sends.push(this.nextFrame(message));
+    this.sends.push(this.nextFrame(scrubFrame(this.scrub, "send", this.scrubInfo(), message)));
   }
 
-  /** Logs one server→client message. Dropped after finish. */
+  /**
+   * Logs one server→client message, scrubbed by the session's frame scrub
+   * hook before it is retained. Dropped after finish.
+   */
   recordRecv(message: Uint8Array): void {
     if (this.finished) return;
-    this.recvs.push(this.nextFrame(message));
+    this.recvs.push(this.nextFrame(scrubFrame(this.scrub, "recv", this.scrubInfo(), message)));
   }
 
   /**
@@ -177,7 +198,15 @@ export class StreamReplay {
   constructor(
     /** The open-time fingerprint of this interaction. */
     readonly fingerprint: string,
-    private readonly pair: StreamedInteraction
+    private readonly pair: StreamedInteraction,
+    /**
+     * Session frame scrub hook. Live send bytes pass through it before the
+     * byte comparison — recorded frames were scrubbed at record time, so
+     * symmetric scrubbing is what makes a scrubbed cassette match its live
+     * traffic. Recorded recv frames are never re-scrubbed.
+     */
+    private readonly scrub?: StreamScrubFn,
+    private readonly adapterID = "",
   ) {
     const err = pair.resp.error;
     this.recordedError = err != null && err !== "" ? new Error(err) : null;
@@ -228,6 +257,7 @@ export class StreamReplay {
    */
   send(message: Uint8Array): void {
     if (this.mismatch) throw this.mismatch;
+    message = scrubFrame(this.scrub, "send", { adapterID: this.adapterID, type: this.type }, message);
     const frames = this.pair.req.stream.frames;
     const i = this.sendIdx;
     if (i >= frames.length) throw this.terminal();
