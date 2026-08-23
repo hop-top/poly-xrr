@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	xrr "hop.top/xrr"
@@ -39,15 +43,17 @@ import (
 // The returned dialer never opens a socket. Pass it to grpc.NewClient
 // exactly where the record dialer went; the client behaves as if a server
 // were present.
-func ReplayDialer(session *xrr.FileSession) DialFunc {
+func ReplayDialer(session *xrr.FileSession, cassetteDir string) DialFunc {
 	return func(ctx context.Context, addr string) (net.Conn, error) {
 		client, server := net.Pipe()
 		r := &replayConn{
 			session: session,
+			dir:     cassetteDir,
 			conn:    server,
 			framer:  http2.NewFramer(server, server),
 			enc:     newHeaderEncoder(),
 			streams: make(map[uint32]*replayStream),
+			probeN:  make(map[string]int),
 		}
 		r.framer.ReadMetaHeaders = hpack.NewDecoder(hpackTableSize, nil)
 		r.framer.SetMaxReadFrameSize(maxFrameSize)
@@ -85,6 +91,7 @@ func (h *headerEncoder) encode(fields ...hpack.HeaderField) []byte {
 // replayConn drives the server side of the in-memory pipe.
 type replayConn struct {
 	session *xrr.FileSession
+	dir     string
 	conn    net.Conn
 	framer  *http2.Framer
 	enc     *headerEncoder
@@ -94,6 +101,56 @@ type replayConn struct {
 
 	mu      sync.Mutex
 	streams map[uint32]*replayStream
+	// probeN shadows the session's occurrence counter so a probe can ask
+	// "does the cassette for the NEXT open of this tuple exist?" without
+	// consuming the real counter. Keyed identically to the core's counter
+	// (adapter id + canonical identity), it is incremented only when an
+	// open really happens, keeping the two in lockstep.
+	probeN map[string]int
+}
+
+// cassetteExists reports whether a streamed pair is on disk for the given
+// type, without opening it and without consuming the session's occurrence
+// counter. Used only to break the client-vs-bidi ambiguity; see
+// inferReplayType.
+func (r *replayConn) cassetteExists(typ xrr.StreamType, service, method string, openMsg []byte) bool {
+	if r.dir == "" {
+		return false
+	}
+	open := streamOpenFor(r.session, typ, service, method, openMsg)
+	n := -1
+	if open.Counter {
+		n = r.probeN[counterKey(open)]
+	}
+	fp, err := xrr.StreamFingerprint(open, n)
+	if err != nil {
+		return false
+	}
+	for _, kind := range [...]string{"req", "resp"} {
+		path := filepath.Join(r.dir, fmt.Sprintf("%s-%s.%s.yaml", adapterID, fp, kind))
+		if _, statErr := os.Stat(path); statErr != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// counterKey mirrors the core's occurrence-counter key: adapter id plus the
+// canonical identity with n omitted.
+func counterKey(open xrr.StreamOpen) string {
+	keys := make([]string, 0, len(open.Identity))
+	for k := range open.Identity {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(open.AdapterID)
+	b.WriteString("\x00")
+	b.WriteString(string(open.Type))
+	for _, k := range keys {
+		fmt.Fprintf(&b, "\x00%s=%v", k, open.Identity[k])
+	}
+	return b.String()
 }
 
 // replayStream is one RPC being served from a cassette.
@@ -210,12 +267,7 @@ func (r *replayConn) onData(f *http2.DataFrame) error {
 	s.buffered = append(s.buffered, msgs...)
 	r.mu.Unlock()
 
-	if f.StreamEnded() {
-		return r.advance(f.StreamID, true)
-	}
-	// A bidi client may never half-close; serve as soon as we can address
-	// the cassette (first message is enough for content-addressed opens).
-	return r.advance(f.StreamID, false)
+	return r.advance(f.StreamID, f.StreamEnded())
 }
 
 // advance opens the cassette once addressable and streams the recorded
@@ -243,7 +295,10 @@ func (r *replayConn) advance(id uint32, halfClosed bool) error {
 		return nil
 	}
 
-	typ, ready := inferReplayType(s, halfClosed)
+	probe := func(candidate xrr.StreamType, openMsg []byte) bool {
+		return r.cassetteExists(candidate, s.service, s.method, openMsg)
+	}
+	typ, ready := inferReplayType(s, halfClosed, probe)
 	if !ready {
 		r.mu.Unlock()
 		return nil
@@ -259,7 +314,13 @@ func (r *replayConn) advance(id uint32, halfClosed bool) error {
 	if len(msgs) > 0 {
 		openMsg = msgs[0]
 	}
-	rp, err := r.session.OpenStreamReplay(streamOpenFor(r.session, typ, service, method, openMsg))
+	realOpen := streamOpenFor(r.session, typ, service, method, openMsg)
+	if realOpen.Counter {
+		r.mu.Lock()
+		r.probeN[counterKey(realOpen)]++
+		r.mu.Unlock()
+	}
+	rp, err := r.session.OpenStreamReplay(realOpen)
 	if err != nil {
 		code := codes.NotFound
 		if errors.Is(err, xrr.ErrShapeMismatch) {
@@ -290,29 +351,56 @@ func (r *replayConn) advance(id uint32, halfClosed bool) error {
 	return r.deliver(id, rp)
 }
 
-// inferReplayType decides the stream type from the same evidence the
-// recorder used, so both address the cassette identically.
+// inferReplayType decides which stream type to address the cassette by,
+// from the evidence available so far.
 //
-// Returning ready=false means "not addressable yet" — wait for more client
-// traffic before opening.
-func inferReplayType(s *replayStream, halfClosed bool) (xrr.StreamType, bool) {
+// The recorder decides this at TERMINAL, when the whole shape is known.
+// Replay has to decide EARLIER — it must answer the client — and before the
+// half-close, client-streaming and bidi are genuinely indistinguishable on
+// the wire: both are "N client messages, no close yet". Waiting for the
+// half-close would resolve it, but a bidi client does not half-close until
+// it has read the replies it is waiting for, so waiting deadlocks it.
+//
+// The tie is therefore broken by asking the cassette directory which
+// fingerprint actually exists (probe), which is free of side effects — it
+// does not consume the session's occurrence counter. Only once a type is
+// chosen does the caller open the replay for real.
+//
+// Returning ready=false means "not addressable yet": wait for more client
+// traffic.
+func inferReplayType(s *replayStream, halfClosed bool, probe func(xrr.StreamType, []byte) bool) (xrr.StreamType, bool) {
 	n := len(s.buffered)
-	switch {
-	case halfClosed && n == 1:
-		// One message then half-close: the server-streaming signature.
-		return xrr.StreamServer, true
-	case halfClosed:
-		// Zero or many messages then half-close: client-streaming shape.
-		// (A bidi stream that half-closes after N>1 messages is recorded
-		// as bidi only if the server also sent more than one message,
-		// which replay cannot know in advance; see the package limits.)
-		return xrr.StreamClient, true
-	case n >= 1:
-		// Still open with messages in flight: bidi.
+	var openMsg []byte
+	if n > 0 {
+		openMsg = s.buffered[0]
+	}
+
+	if halfClosed {
+		// One message then immediate half-close is the server-streaming
+		// signature, but a one-message client-stream looks identical, so
+		// the cassette decides.
+		if n == 1 && probe(xrr.StreamServer, openMsg) {
+			return xrr.StreamServer, true
+		}
+		if probe(xrr.StreamClient, nil) {
+			return xrr.StreamClient, true
+		}
 		return xrr.StreamBidi, true
-	default:
+	}
+
+	if n == 0 {
 		return "", false
 	}
+	// Still open. A bidi recording is the reason the client is waiting, so
+	// prefer it; fall back to server-streaming (a client that has not yet
+	// emitted its half-close).
+	if probe(xrr.StreamBidi, nil) {
+		return xrr.StreamBidi, true
+	}
+	if probe(xrr.StreamServer, openMsg) {
+		return xrr.StreamServer, true
+	}
+	return "", false
 }
 
 // deliver writes the recorded response: initial HEADERS, one DATA frame per
