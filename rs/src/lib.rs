@@ -1,11 +1,16 @@
 pub mod adapters;
+mod b64;
 pub mod cassette;
 pub mod error;
 pub mod session;
+pub mod stream;
+mod stream_fingerprint;
+mod stream_session;
 
 pub use cassette::FileCassette;
 pub use error::XrrError;
 pub use session::{Mode, Session};
+pub use stream_session::{StreamRecording, StreamReplay};
 
 use serde::{de::DeserializeOwned, Serialize};
 

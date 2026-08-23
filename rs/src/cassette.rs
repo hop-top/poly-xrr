@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::error::XrrError;
+use crate::{error::XrrError, stream::StreamedPair};
 
 #[derive(Serialize, Deserialize)]
 struct Envelope<T> {
@@ -11,6 +11,11 @@ struct Envelope<T> {
     adapter: String,
     fingerprint: String,
     recorded_at: String,
+    /// v1 optional resp-only field: recorded error message from the
+    /// original interaction. Non-empty ⇒ replay re-emits an error.
+    /// `.req.yaml` MUST NOT carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
     payload: T,
 }
 
@@ -30,9 +35,22 @@ impl FileCassette {
         req: &Req,
         resp: &Resp,
     ) -> Result<(), XrrError> {
+        self.save_with_error(adapter_id, fingerprint, req, resp, None)
+    }
+
+    /// Save a pair whose original interaction ended in an error: the
+    /// message lands in the v1 resp envelope `error` field.
+    pub fn save_with_error<Req: Serialize, Resp: Serialize>(
+        &self,
+        adapter_id: &str,
+        fingerprint: &str,
+        req: &Req,
+        resp: &Resp,
+        error: Option<&str>,
+    ) -> Result<(), XrrError> {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.write(adapter_id, fingerprint, "req", &now, req)?;
-        self.write(adapter_id, fingerprint, "resp", &now, resp)?;
+        self.write(adapter_id, fingerprint, "req", &now, req, None)?;
+        self.write(adapter_id, fingerprint, "resp", &now, resp, error)?;
         Ok(())
     }
 
@@ -43,12 +61,14 @@ impl FileCassette {
         kind: &str,
         recorded_at: &str,
         payload: &T,
+        error: Option<&str>,
     ) -> Result<(), XrrError> {
         let env = Envelope {
             xrr: "1".into(),
             adapter: adapter_id.into(),
             fingerprint: fingerprint.into(),
             recorded_at: recorded_at.into(),
+            error: error.map(Into::into),
             payload,
         };
         let data = serde_yaml::to_string(&env)?;
@@ -64,9 +84,38 @@ impl FileCassette {
         adapter_id: &str,
         fingerprint: &str,
     ) -> Result<(Req, Resp), XrrError> {
-        let req = self.read::<Req>(adapter_id, fingerprint, "req")?;
-        let resp = self.read::<Resp>(adapter_id, fingerprint, "resp")?;
+        let (req, resp, _error) = self.load_with_error(adapter_id, fingerprint)?;
         Ok((req, resp))
+    }
+
+    /// Load a pair plus the v1 resp envelope `error` field. Non-empty ⇒
+    /// the recorded interaction failed and replay must surface the error
+    /// alongside the response payload.
+    pub fn load_with_error<Req: DeserializeOwned, Resp: DeserializeOwned>(
+        &self,
+        adapter_id: &str,
+        fingerprint: &str,
+    ) -> Result<(Req, Resp, Option<String>), XrrError> {
+        let (req, _) = self.read::<Req>(adapter_id, fingerprint, "req")?;
+        let (resp, error) = self.read::<Resp>(adapter_id, fingerprint, "resp")?;
+        Ok((req, resp, error))
+    }
+
+    /// Load a streamed pair (v1 `stream` envelope extension), parsed and
+    /// validated. Missing file ⇒ cassette miss; unary pair ⇒ shape
+    /// mismatch.
+    pub fn load_stream(
+        &self,
+        adapter_id: &str,
+        fingerprint: &str,
+    ) -> Result<StreamedPair, XrrError> {
+        StreamedPair::load(&self.dir, adapter_id, fingerprint)
+    }
+
+    /// Write a streamed pair via the format-layer emitter (v1 naming,
+    /// last-write-wins).
+    pub fn save_stream(&self, pair: &StreamedPair) -> Result<(), XrrError> {
+        pair.save(&self.dir)
     }
 
     fn read<T: DeserializeOwned>(
@@ -74,7 +123,7 @@ impl FileCassette {
         adapter_id: &str,
         fingerprint: &str,
         kind: &str,
-    ) -> Result<T, XrrError> {
+    ) -> Result<(T, Option<String>), XrrError> {
         let path = self
             .dir
             .join(format!("{}-{}.{}.yaml", adapter_id, fingerprint, kind));
@@ -89,7 +138,7 @@ impl FileCassette {
             }
         })?;
 
-        // Deserialize into raw value map, then extract payload.
+        // Deserialize into raw value map, then extract payload + error.
         let raw: serde_yaml::Value = serde_yaml::from_str(&data)?;
         let payload = raw
             .get("payload")
@@ -100,8 +149,12 @@ impl FileCassette {
                 ))
             })?
             .clone();
+        let error = raw
+            .get("error")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let result: T = serde_yaml::from_value(payload)?;
-        Ok(result)
+        Ok((result, error))
     }
 }
 
@@ -143,6 +196,41 @@ mod tests {
         assert_eq!(loaded_req.argv, req.argv);
         assert_eq!(loaded_resp.stdout, resp.stdout);
         assert_eq!(loaded_resp.exit_code, 0);
+    }
+
+    #[test]
+    fn error_field_roundtrips_on_resp_only() {
+        let tmp = TempDir::new().unwrap();
+        let cassette = FileCassette::new(tmp.path());
+        cassette
+            .save_with_error("exec", "deadbeef", &make_req(), &make_resp(), Some("exit status 1"))
+            .unwrap();
+
+        let (_req, _resp, error): (ExecRequest, ExecResponse, _) =
+            cassette.load_with_error("exec", "deadbeef").unwrap();
+        assert_eq!(error.as_deref(), Some("exit status 1"));
+
+        // The req file MUST NOT carry the error field.
+        let req_raw = std::fs::read_to_string(
+            tmp.path().join("exec-deadbeef.req.yaml"),
+        )
+        .unwrap();
+        assert!(!req_raw.contains("error:"), "req must not carry error:\n{req_raw}");
+        let resp_raw = std::fs::read_to_string(
+            tmp.path().join("exec-deadbeef.resp.yaml"),
+        )
+        .unwrap();
+        assert!(resp_raw.contains("error: exit status 1"), "resp carries error:\n{resp_raw}");
+    }
+
+    #[test]
+    fn absent_error_field_loads_as_none() {
+        let tmp = TempDir::new().unwrap();
+        let cassette = FileCassette::new(tmp.path());
+        cassette.save("exec", "abcd1234", &make_req(), &make_resp()).unwrap();
+        let (_req, _resp, error): (ExecRequest, ExecResponse, _) =
+            cassette.load_with_error("exec", "abcd1234").unwrap();
+        assert_eq!(error, None);
     }
 
     #[test]

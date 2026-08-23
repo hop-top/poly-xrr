@@ -54,17 +54,20 @@ resp2, err := s2.Record(ctx, adapter, req, do)
 
 ## Adapters
 
-| ID    | Intercepts      | Fingerprint fields                         | Ports         |
-|-------|-----------------|--------------------------------------------|---------------|
-| exec  | shell commands  | argv + stdin                               | all¹          |
-| http  | HTTP requests   | method + path+query + sha256(body)[:8]     | all           |
-| grpc  | gRPC calls      | service + method + sha256(proto-bytes)[:8] | go only       |
-| redis | Redis commands  | command + args                             | all           |
-| sql   | SQL queries     | normalized query + args                    | all           |
+| ID    | Intercepts           | Fingerprint fields                         | Ports         |
+|-------|----------------------|--------------------------------------------|---------------|
+| exec  | shell commands       | argv + stdin                               | all¹          |
+| http  | HTTP requests        | method + path+query + sha256(body)[:8]     | all           |
+| grpc  | gRPC calls + streams²| service + method + sha256(proto-bytes)[:8] | go only       |
+| redis | Redis commands       | command + args                             | all           |
+| sql   | SQL queries          | normalized query + args                    | all           |
 
 ¹ The Go port additionally hashes `cwd` into the exec fingerprint when
 non-empty — a backward-compatible extension for per-directory isolation
 (see below). Other ports are expected to adopt the same rule.
+
+² Unary fingerprint shown; streamed RPCs (server / client / bidi) use
+stream-specific fingerprints — see "Streaming (gRPC)" below.
 
 ### Exec adapter: per-directory isolation (Go-only extension)
 
@@ -85,6 +88,49 @@ the cross-runtime replay guarantee. See
 `go/examples/wrap_command_runner/main.go` for the canonical Go
 adoption pattern, and `spec/cassette-format-v1.md` for the formal
 spec status of this extension.
+
+## Streaming (gRPC)
+
+Server-, client-, and bidi-streaming RPCs record and replay through a
+`grpc.StreamClientInterceptor` — same session, same three modes:
+
+```go
+// Record once against the real server
+s := xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette("./cassettes"))
+conn, err := grpc.NewClient(target,
+    grpc.WithStreamInterceptor(xgrpc.StreamClientInterceptor(s)),
+)
+// ... run your streaming RPCs; every message is teed into cassettes
+
+// Replay everywhere — no server, no network
+s2 := xrr.NewSession(xrr.ModeReplay, xrr.NewFileCassette("./cassettes"))
+conn2, err := grpc.NewClient(target,
+    grpc.WithStreamInterceptor(xgrpc.StreamClientInterceptor(s2)),
+)
+// ... the same RPCs replay the recorded conversation, errors included
+```
+
+A streamed interaction is one req/resp cassette pair carrying a frame log
+(the `stream` envelope extension). Replay validates sent messages
+byte-for-byte and serves received messages in recorded order, ending with
+the recorded terminal (end-of-stream or the original status error). Full
+semantics: [spec/cassette-format-streaming.md](spec/cassette-format-streaming.md).
+
+- **Frames record verbatim unless you install the scrub hook.** The Go
+  port's `NewSessionWithStreamScrub` takes a deterministic function over
+  decoded frame bytes, applied identically at record and replay (base64
+  makes after-the-fact cassette scrubbing impossible — the hook is the
+  only seam). Install the same hook on the recording and replaying
+  session. Other ports have no hook yet: don't tape secret-bearing
+  streams there (exec-style stdin/env is the classic trap).
+- **Every port records and replays streams; the gRPC adapter is Go-only
+  today.** ts / py / rs / php ship the same stream session API as Go —
+  open a stream recording, append frames, finish; open a replay,
+  send/receive against the recorded conversation — with adapter-supplied
+  identities, so any port can tape and serve streamed interactions
+  programmatically and replay cassettes recorded by any other. Only the
+  Go port ships the gRPC streaming interceptor on top of it.
+- Unary RPCs keep the existing unary cassette shape — nothing migrates.
 
 ## Cross-process e2e (XRR_MODE + XRR_CASSETTE_DIR)
 
@@ -207,6 +253,10 @@ cassettes/
 
 Cross-compat guarantee: cassettes recorded in any language replay in any other.
 Every port runs the shared conformance fixtures from `spec/fixtures/`.
+
+Streamed interactions ride the same envelope plus a `stream` frame-log
+extension — still one req/resp pair per interaction. See
+[spec/cassette-format-streaming.md](spec/cassette-format-streaming.md).
 
 ## Languages
 

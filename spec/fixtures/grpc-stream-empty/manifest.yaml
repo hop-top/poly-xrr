@@ -1,0 +1,10 @@
+interactions:
+  - adapter: grpc
+    fingerprint: "ffbc4bac"
+    streamed: true
+  - adapter: grpc
+    fingerprint: "fbdff683"
+    streamed: true
+  - adapter: grpc
+    fingerprint: "ebbd3938"
+    streamed: true

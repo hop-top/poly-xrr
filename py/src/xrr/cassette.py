@@ -7,6 +7,15 @@ from typing import Any
 
 import yaml
 
+from .stream import (
+    QuotedStr,
+    ShapeMismatch,
+    StreamedPair,
+    dump_envelope,
+    emit_pair,
+    parse_pair,
+)
+
 
 class CassetteMiss(Exception):
     """Raised when replay finds no matching cassette file."""
@@ -40,15 +49,14 @@ class FileCassette:
         envelope = {
             "xrr": "1",
             "adapter": adapter_id,
-            "fingerprint": fingerprint,
+            # Quoted per spec: an unquoted all-digit fingerprint reparses
+            # as an integer and no longer matches its filename.
+            "fingerprint": QuotedStr(fingerprint),
             "recorded_at": recorded_at,
             "payload": payload,
         }
-        path = os.path.join(
-            self._dir, f"{adapter_id}-{fingerprint}.{kind}.yaml"
-        )
-        with open(path, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(envelope, fh, default_flow_style=False, sort_keys=False)
+        with open(self._path(adapter_id, fingerprint, kind), "w", encoding="utf-8") as fh:
+            fh.write(dump_envelope(envelope))
 
     def load(
         self, adapter_id: str, fingerprint: str
@@ -58,16 +66,46 @@ class FileCassette:
         resp = self._read(adapter_id, fingerprint, "resp")
         return req, resp
 
-    def _read(self, adapter_id: str, fingerprint: str, kind: str) -> dict[str, Any]:
-        path = os.path.join(
+    def save_stream(self, pair: StreamedPair) -> None:
+        """Persist one streamed interaction as its req/resp pair."""
+        req_text, resp_text = emit_pair(pair)
+        for kind, text in (("req", req_text), ("resp", resp_text)):
+            path = self._path(pair.adapter, pair.fingerprint, kind)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(text)
+
+    def load_stream(self, adapter_id: str, fingerprint: str) -> StreamedPair:
+        """Load and validate one streamed pair.
+
+        Raises CassetteMiss when either file is absent, ShapeMismatch when
+        the pair is unary, StreamFormatError when malformed.
+        """
+        req_text = self._read_text(adapter_id, fingerprint, "req")
+        resp_text = self._read_text(adapter_id, fingerprint, "resp")
+        return parse_pair(req_text, resp_text)
+
+    def _path(self, adapter_id: str, fingerprint: str, kind: str) -> str:
+        return os.path.join(
             self._dir, f"{adapter_id}-{fingerprint}.{kind}.yaml"
         )
+
+    def _read_text(self, adapter_id: str, fingerprint: str, kind: str) -> str:
+        path = self._path(adapter_id, fingerprint, kind)
         if not os.path.exists(path):
             raise CassetteMiss(
                 f"xrr: cassette miss: {adapter_id}-{fingerprint}.{kind}.yaml"
             )
         with open(path, encoding="utf-8") as fh:
-            envelope = yaml.safe_load(fh)
+            return fh.read()
+
+    def _read(self, adapter_id: str, fingerprint: str, kind: str) -> dict[str, Any]:
+        envelope = yaml.safe_load(self._read_text(adapter_id, fingerprint, kind))
+        if isinstance(envelope, dict) and "stream" in envelope:
+            # Streamed cassette through the unary path — a shape-mismatch
+            # error, distinct from a cassette miss (spec: Envelope Extension).
+            raise ShapeMismatch(
+                f"xrr: streamed cassette {kind} file loaded through unary path"
+            )
         payload = envelope.get("payload")
         if payload is None:
             raise ValueError(f"xrr: missing payload in {kind} file")

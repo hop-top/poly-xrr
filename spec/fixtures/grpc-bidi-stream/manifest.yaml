@@ -1,0 +1,4 @@
+interactions:
+  - adapter: grpc
+    fingerprint: "c6233d2e"
+    streamed: true

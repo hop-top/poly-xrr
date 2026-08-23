@@ -9,6 +9,7 @@
 | [US-0103](US-0103-cross-language-replay.md) | Replay Go cassette in Python test | Solo Dev + Test Infra |
 | [US-0104](US-0104-adapter-selection.md) | Pick the right adapter for a channel | Solo Developer |
 | [US-0105](US-0105-cassette-miss.md) | Handle cassette miss in replay mode | Solo Developer |
+| [US-0106](US-0106-stream-record-replay.md) | Record and replay a streaming gRPC call | Solo Developer |
 
 ## US-02xx — OSS Contributor
 

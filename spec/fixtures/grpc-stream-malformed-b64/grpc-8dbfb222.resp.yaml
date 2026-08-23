@@ -1,0 +1,20 @@
+xrr: "1"
+adapter: grpc
+fingerprint: "8dbfb222"
+recorded_at: "2026-08-23T12:00:00Z"
+payload:
+  status_code: 0
+stream:
+  frames:
+    - seq: 2
+      message_b64: "YmxvYi1jaHVuayAx"
+      at_ms: 8
+    - seq: 3
+      message_b64: "YmxvYi1jaHVu ayAy"
+      at_ms: 11
+    - seq: 4
+      message_b64: "YmxvYi1jaHVuayEh!"
+      at_ms: 14
+  end:
+    seq: 5
+    at_ms: 16

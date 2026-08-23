@@ -4,18 +4,33 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 )
 
 // FileSession dispatches record/replay/passthrough via a Cassette.
 type FileSession struct {
 	mode     Mode
 	cassette *FileCassette
+
+	// Streamed-open occurrence counters: one session object is one
+	// counter domain, keyed by adapter id + canonical identity. See
+	// stream_session.go.
+	streamMu sync.Mutex
+	streamN  map[string]int
+
+	// streamScrub is the frame-level scrub hook, nil by default (frames
+	// record and replay verbatim). See stream_scrub.go.
+	streamScrub StreamScrubFunc
 }
 
 // NewSession creates a FileSession with the given mode and cassette.
 func NewSession(mode Mode, cassette *FileCassette) *FileSession {
 	return &FileSession{mode: mode, cassette: cassette}
 }
+
+// Mode returns the session mode. Streaming adapters dispatch on it to pick
+// the record, replay, or passthrough path at stream open.
+func (s *FileSession) Mode() Mode { return s.mode }
 
 // RawResponse wraps a replayed payload when the adapter type is unknown.
 type RawResponse struct {
@@ -28,15 +43,15 @@ func (r *RawResponse) AdapterID() string { return r.adapterID_ }
 // Record executes one interaction according to the session mode.
 //
 //   - record:      calls do(), saves req+resp+err to cassette, returns
-//                  (resp, err) verbatim. A non-nil err from do() is
-//                  persisted as the resp envelope's "error" field and is
-//                  also returned to the caller, so error semantics are
-//                  preserved across record sessions. Save failures take
-//                  precedence over the recorded error.
+//     (resp, err) verbatim. A non-nil err from do() is
+//     persisted as the resp envelope's "error" field and is
+//     also returned to the caller, so error semantics are
+//     preserved across record sessions. Save failures take
+//     precedence over the recorded error.
 //   - replay:      loads from cassette, returns (RawResponse, replayedErr)
-//                  where replayedErr is errors.New(envelope.error) when
-//                  the recording captured a failure, else nil. do() is
-//                  NOT called.
+//     where replayedErr is errors.New(envelope.error) when
+//     the recording captured a failure, else nil. do() is
+//     NOT called.
 //   - passthrough: calls do(), never touches cassette.
 func (s *FileSession) Record(
 	_ context.Context,

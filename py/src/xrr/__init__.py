@@ -1,6 +1,32 @@
 """xrr — multi-channel interaction recorder/replayer."""
 from .cassette import CassetteMiss, FileCassette
 from .session import PASSTHROUGH, RECORD, REPLAY, Session
+from .stream import (
+    BIDI,
+    CLIENT,
+    SERVER,
+    ReqStream,
+    RespStream,
+    ShapeMismatch,
+    StreamedPair,
+    StreamEvent,
+    StreamFormatError,
+    StreamFrame,
+    StreamOpen,
+    counter_stream_fingerprint,
+    emit_pair,
+    msg_hash,
+    parse_pair,
+    server_stream_fingerprint,
+    stream_fingerprint,
+)
+from .stream_session import (
+    RecordedStreamError,
+    StreamDone,
+    StreamMismatchError,
+    StreamRecording,
+    StreamReplay,
+)
 
 __all__ = [
     "CassetteMiss",
@@ -9,4 +35,26 @@ __all__ = [
     "RECORD",
     "REPLAY",
     "PASSTHROUGH",
+    "SERVER",
+    "CLIENT",
+    "BIDI",
+    "RecordedStreamError",
+    "ReqStream",
+    "RespStream",
+    "ShapeMismatch",
+    "StreamedPair",
+    "StreamDone",
+    "StreamEvent",
+    "StreamFormatError",
+    "StreamFrame",
+    "StreamMismatchError",
+    "StreamOpen",
+    "StreamRecording",
+    "StreamReplay",
+    "counter_stream_fingerprint",
+    "emit_pair",
+    "msg_hash",
+    "parse_pair",
+    "server_stream_fingerprint",
+    "stream_fingerprint",
 ]
