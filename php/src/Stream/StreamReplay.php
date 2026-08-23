@@ -30,9 +30,17 @@ class StreamReplay
 
     private ?StreamMismatchException $mismatch = null;
 
+    /**
+     * @param ?StreamScrub $scrub frame-level scrub hook, applied to LIVE
+     *   send bytes before comparison. Recorded frames were already scrubbed
+     *   at record time and are delivered verbatim — never re-scrubbed
+     *   (cassette-format-streaming.md, REDACTION WARNING).
+     */
     public function __construct(
         private readonly StreamedInteraction $pair,
-        private readonly string $fingerprint
+        private readonly string $fingerprint,
+        private readonly string $adapterID = '',
+        private readonly ?StreamScrub $scrub = null
     ) {}
 
     /** The open-time fingerprint of this interaction. */
@@ -81,6 +89,14 @@ class StreamReplay
         if ($this->mismatch !== null) {
             throw $this->mismatch;
         }
+        // Live send bytes are scrubbed before comparison, so a scrubbed
+        // recording matches a scrubbed replay of the same traffic.
+        $message = $this->scrub?->scrub(
+            StreamDirection::Send,
+            $this->adapterID,
+            $this->pair->req->type,
+            $message
+        ) ?? $message;
         $i      = $this->sendIdx;
         $frames = $this->pair->req->frames;
         if ($i >= count($frames)) {

@@ -30,13 +30,18 @@ class StreamRecording
 
     private bool $finished = false;
 
-    /** @param array<string, mixed> $reqPayload */
+    /**
+     * @param array<string, mixed> $reqPayload
+     * @param ?StreamScrub $scrub frame-level scrub hook; null retains
+     *   frames verbatim (cassette-format-streaming.md, REDACTION WARNING)
+     */
     public function __construct(
         private readonly FileCassette $cassette,
         private readonly string $adapterID,
         private readonly string $fingerprint,
         private readonly StreamType $type,
-        private readonly array $reqPayload
+        private readonly array $reqPayload,
+        private readonly ?StreamScrub $scrub = null
     ) {
         $this->openedNs = (int) hrtime(true);
     }
@@ -47,22 +52,43 @@ class StreamRecording
         return $this->fingerprint;
     }
 
-    /** Logs one client→server message (decoded bytes). Dropped after finish. */
+    /**
+     * Logs one client→server message (decoded bytes), scrubbed by the
+     * session's frame scrub hook before it is retained. Dropped after
+     * finish.
+     */
     public function recordSend(string $message): void
     {
         if ($this->finished) {
             return;
         }
-        $this->sends[] = new Frame($this->seq++, $message, $this->elapsedMs());
+        $this->sends[] = new Frame(
+            $this->seq++,
+            $this->scrubFrame(StreamDirection::Send, $message),
+            $this->elapsedMs()
+        );
     }
 
-    /** Logs one server→client message (decoded bytes). Dropped after finish. */
+    /**
+     * Logs one server→client message (decoded bytes), scrubbed by the
+     * session's frame scrub hook before it is retained. Dropped after
+     * finish.
+     */
     public function recordRecv(string $message): void
     {
         if ($this->finished) {
             return;
         }
-        $this->recvs[] = new Frame($this->seq++, $message, $this->elapsedMs());
+        $this->recvs[] = new Frame(
+            $this->seq++,
+            $this->scrubFrame(StreamDirection::Recv, $message),
+            $this->elapsedMs()
+        );
+    }
+
+    private function scrubFrame(StreamDirection $dir, string $message): string
+    {
+        return $this->scrub?->scrub($dir, $this->adapterID, $this->type, $message) ?? $message;
     }
 
     /**

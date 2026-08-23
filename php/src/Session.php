@@ -7,19 +7,51 @@ namespace HopTop\Xrr;
 use HopTop\Xrr\Exception\CassetteMissException;
 use HopTop\Xrr\Exception\ShapeMismatchException;
 use HopTop\Xrr\Stream\OccurrenceCounter;
+use HopTop\Xrr\Stream\StreamDirection;
 use HopTop\Xrr\Stream\StreamFingerprint;
 use HopTop\Xrr\Stream\StreamOpen;
 use HopTop\Xrr\Stream\StreamRecording;
 use HopTop\Xrr\Stream\StreamReplay;
+use HopTop\Xrr\Stream\StreamScrub;
+use HopTop\Xrr\Stream\StreamType;
 
 class Session
 {
     private ?OccurrenceCounter $streamOccurrences = null;
 
+    /**
+     * @param ?StreamScrub $streamScrub frame-level secret scrubbing for
+     *   streamed interactions. Null records and replays frames verbatim.
+     *   Install the SAME hook when recording and when replaying: scrubbing
+     *   is symmetric by design, and a session replaying a scrubbed cassette
+     *   without the hook fails with a stream mismatch
+     *   (cassette-format-streaming.md, REDACTION WARNING).
+     */
     public function __construct(
         private Mode $mode,
-        private FileCassette $cassette
+        private FileCassette $cassette,
+        private ?StreamScrub $streamScrub = null
     ) {}
+
+    /**
+     * Applies the session's frame scrub hook to $data, returning it
+     * unchanged when no hook is installed.
+     *
+     * Adapters whose open identity derives from message bytes (the gRPC
+     * server-stream msg_hash) MUST compute that identity over this method's
+     * output, in record and replay mode alike, so both modes address the
+     * cassette by the scrubbed content. Frames handed to the core
+     * (recordSend/recordRecv, replay send) are scrubbed by the core itself
+     * — adapters pass them raw and never double-scrub.
+     */
+    public function scrubStreamFrame(
+        StreamDirection $dir,
+        string $adapterID,
+        StreamType $type,
+        string $data
+    ): string {
+        return $this->streamScrub?->scrub($dir, $adapterID, $type, $data) ?? $data;
+    }
 
     /**
      * Occurrence counter for streamed opens whose fingerprint carries `n`.
@@ -94,7 +126,14 @@ class Session
             $payload['n'] = $n;
         }
 
-        return new StreamRecording($this->cassette, $open->adapterID, $fp, $open->type, $payload);
+        return new StreamRecording(
+            $this->cassette,
+            $open->adapterID,
+            $fp,
+            $open->type,
+            $payload,
+            $this->streamScrub
+        );
     }
 
     /**
@@ -122,7 +161,7 @@ class Session
             ));
         }
 
-        return new StreamReplay($pair, $fp);
+        return new StreamReplay($pair, $fp, $open->adapterID, $this->streamScrub);
     }
 
     /**
