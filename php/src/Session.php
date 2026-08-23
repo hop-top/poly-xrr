@@ -33,6 +33,12 @@ class Session
         private ?StreamScrub $streamScrub = null
     ) {}
 
+    /** The session's mode. Adapters dispatch their own behaviour on it. */
+    public function mode(): Mode
+    {
+        return $this->mode;
+    }
+
     /**
      * Applies the session's frame scrub hook to $data, returning it
      * unchanged when no hook is installed.

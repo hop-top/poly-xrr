@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "488a5d9361bdb963d50c3aef764d3755",
+    "content-hash": "1d8b908e3fc6ff73cf807ba695525738",
     "packages": [
         {
             "name": "symfony/deprecation-contracts",
@@ -234,6 +234,50 @@
         }
     ],
     "packages-dev": [
+        {
+            "name": "grpc/grpc",
+            "version": "1.82.0",
+            "source": {
+                "type": "git",
+                "url": "https://github.com/grpc/grpc-php.git",
+                "reference": "be984cb608f21e96453b3cfe54c748cc7b192250"
+            },
+            "dist": {
+                "type": "zip",
+                "url": "https://api.github.com/repos/grpc/grpc-php/zipball/be984cb608f21e96453b3cfe54c748cc7b192250",
+                "reference": "be984cb608f21e96453b3cfe54c748cc7b192250",
+                "shasum": ""
+            },
+            "require": {
+                "php": ">=7.1.0"
+            },
+            "require-dev": {
+                "google/auth": "^v1.3.0"
+            },
+            "suggest": {
+                "ext-protobuf": "For better performance, install the protobuf C extension.",
+                "google/protobuf": "To get started using grpc quickly, install the native protobuf library."
+            },
+            "type": "library",
+            "autoload": {
+                "psr-4": {
+                    "Grpc\\": "src/lib/"
+                }
+            },
+            "notification-url": "https://packagist.org/downloads/",
+            "license": [
+                "Apache-2.0"
+            ],
+            "description": "gRPC library for PHP",
+            "homepage": "https://grpc.io",
+            "keywords": [
+                "rpc"
+            ],
+            "support": {
+                "source": "https://github.com/grpc/grpc-php/tree/v1.82.0"
+            },
+            "time": "2026-07-03T09:39:53+00:00"
+        },
         {
             "name": "myclabs/deep-copy",
             "version": "1.13.4",
