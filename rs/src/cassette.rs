@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use chrono::Utc;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::{error::XrrError, stream::StreamedPair};
+use crate::error::XrrError;
+use crate::redact::{Redactor, ENVELOPE_META_KEYS};
+use crate::stream::StreamedPair;
 
 #[derive(Serialize, Deserialize)]
 struct Envelope<T> {
@@ -21,11 +23,38 @@ struct Envelope<T> {
 
 pub struct FileCassette {
     dir: PathBuf,
+    // None means "resolve from the environment at write time", which is
+    // what `new` installs so redaction is on by default.
+    redactor: Option<Redactor>,
 }
 
 impl FileCassette {
+    /// Creates a FileCassette that reads/writes to dir.
+    ///
+    /// Redaction is enabled by default, configured from the XRR_REDACT_*
+    /// environment variables. Use [`FileCassette::with_redactor`] to
+    /// supply an explicit policy.
     pub fn new(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self {
+            dir: dir.into(),
+            redactor: None,
+        }
+    }
+
+    /// Creates a FileCassette with an explicit redaction policy,
+    /// bypassing the XRR_REDACT_* environment variables.
+    pub fn with_redactor(dir: impl Into<PathBuf>, redactor: Redactor) -> Self {
+        Self {
+            dir: dir.into(),
+            redactor: Some(redactor),
+        }
+    }
+
+    // Resolves the redactor to use for one write. When none was
+    // injected, config is read from the environment on each write so a
+    // test that flips XRR_REDACT_* mid-process sees the change.
+    fn active_redactor(&self) -> Redactor {
+        self.redactor.clone().unwrap_or_else(Redactor::from_env)
     }
 
     pub fn save<Req: Serialize, Resp: Serialize>(
@@ -71,7 +100,24 @@ impl FileCassette {
             error: error.map(Into::into),
             payload,
         };
-        let data = serde_yaml::to_string(&env)?;
+        // Encode to a value tree first so redaction can walk the generic
+        // structure without knowing any adapter's concrete types. The
+        // scrubbed tree is what gets serialized — a secret never reaches
+        // the YAML string, let alone the file. Envelope metadata is never
+        // scrubbed: the fingerprint in particular must match the filename.
+        let mut tree = serde_yaml::to_value(&env)?;
+        let redactor = self.active_redactor();
+        if let serde_yaml::Value::Mapping(map) = &mut tree {
+            for (k, v) in map.iter_mut() {
+                match k.as_str() {
+                    Some(key) if !ENVELOPE_META_KEYS.contains(&key) => {
+                        redactor.redact_node(v, key);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        let data = serde_yaml::to_string(&tree)?;
         let path = self
             .dir
             .join(format!("{}-{}.{}.yaml", adapter_id, fingerprint, kind));

@@ -40,6 +40,14 @@ export {
   StreamReplay,
 } from "./streamSession.js";
 export type { StreamCassette } from "./streamSession.js";
+export {
+  ENV_REDACT_ALLOW,
+  ENV_REDACT_DENY,
+  ENV_REDACT_DISABLE,
+  Redactor,
+  redactConfigFromEnv,
+} from "./redact.js";
+export type { RedactConfig } from "./redact.js";
 export { ExecAdapter } from "./adapters/exec.js";
 export type { ExecRequest, ExecResponse } from "./adapters/exec.js";
 export { HttpAdapter } from "./adapters/http.js";

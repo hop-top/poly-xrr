@@ -2,6 +2,7 @@ pub mod adapters;
 mod b64;
 pub mod cassette;
 pub mod error;
+pub mod redact;
 pub mod session;
 pub mod stream;
 mod stream_fingerprint;
@@ -9,6 +10,9 @@ mod stream_session;
 
 pub use cassette::FileCassette;
 pub use error::XrrError;
+pub use redact::{
+    RedactConfig, Redactor, ENV_REDACT_ALLOW, ENV_REDACT_DENY, ENV_REDACT_DISABLE,
+};
 pub use session::{Mode, Session};
 pub use stream_session::{StreamRecording, StreamReplay};
 
