@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::error::XrrError;
+use crate::{error::XrrError, stream::StreamedPair};
 
 #[derive(Serialize, Deserialize)]
 struct Envelope<T> {
@@ -99,6 +99,23 @@ impl FileCassette {
         let (req, _) = self.read::<Req>(adapter_id, fingerprint, "req")?;
         let (resp, error) = self.read::<Resp>(adapter_id, fingerprint, "resp")?;
         Ok((req, resp, error))
+    }
+
+    /// Load a streamed pair (v1 `stream` envelope extension), parsed and
+    /// validated. Missing file ⇒ cassette miss; unary pair ⇒ shape
+    /// mismatch.
+    pub fn load_stream(
+        &self,
+        adapter_id: &str,
+        fingerprint: &str,
+    ) -> Result<StreamedPair, XrrError> {
+        StreamedPair::load(&self.dir, adapter_id, fingerprint)
+    }
+
+    /// Write a streamed pair via the format-layer emitter (v1 naming,
+    /// last-write-wins).
+    pub fn save_stream(&self, pair: &StreamedPair) -> Result<(), XrrError> {
+        pair.save(&self.dir)
     }
 
     fn read<T: DeserializeOwned>(
