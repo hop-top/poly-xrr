@@ -28,6 +28,13 @@ from .stream import (
     server_stream_fingerprint,
     stream_fingerprint,
 )
+from .stream_scrub import (
+    RECV,
+    SEND,
+    StreamScrubFunc,
+    StreamScrubInfo,
+    scrub_frame,
+)
 from .stream_session import (
     RecordedStreamError,
     StreamDone,
@@ -57,6 +64,11 @@ __all__ = [
     "StreamFrame",
     "StreamMismatchError",
     "StreamOpen",
+    "StreamScrubFunc",
+    "StreamScrubInfo",
+    "SEND",
+    "RECV",
+    "scrub_frame",
     "StreamRecording",
     "StreamReplay",
     "counter_stream_fingerprint",

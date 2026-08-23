@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from .cassette import FileCassette
 from .stream import ShapeMismatch, StreamOpen, stream_canonical, stream_fingerprint
+from .stream_scrub import StreamScrubFunc, StreamScrubInfo, scrub_frame
 from .stream_session import StreamRecording, StreamReplay
 
 RECORD = "record"
@@ -13,14 +14,50 @@ PASSTHROUGH = "passthrough"
 
 
 class Session:
-    """Dispatches interactions via record, replay, or passthrough."""
+    """Dispatches interactions via record, replay, or passthrough.
 
-    def __init__(self, mode: str, cassette: FileCassette) -> None:
+    ``stream_scrub`` installs the frame-level secret scrub hook applied
+    to every streamed frame (see stream_scrub). It is None by default —
+    frames record and replay verbatim. Install the SAME hook when
+    recording and when replaying: scrubbing is symmetric by design, and
+    a session replaying a scrubbed cassette without the hook fails with
+    a stream mismatch.
+    """
+
+    def __init__(
+        self,
+        mode: str,
+        cassette: FileCassette,
+        stream_scrub: StreamScrubFunc | None = None,
+    ) -> None:
         if mode not in (RECORD, REPLAY, PASSTHROUGH):
             raise ValueError(f"xrr: unknown mode {mode!r}")
         self._mode = mode
         self._cassette = cassette
+        self._stream_scrub = stream_scrub
         self._stream_counts: dict[tuple[Any, ...], int] = {}
+
+    @property
+    def mode(self) -> str:
+        """Session mode. Streaming adapters dispatch on it to pick the
+        record, replay, or passthrough path at stream open."""
+        return self._mode
+
+    def scrub_stream_frame(
+        self, direction: str, info: StreamScrubInfo, data: bytes
+    ) -> bytes:
+        """Apply the session's frame scrub hook to ``data``, returning it
+        unchanged when no hook is installed.
+
+        Adapters whose open identity derives from message bytes (gRPC
+        server-stream msg_hash) MUST compute the derived identity over
+        this function's output, in record and replay mode alike, so both
+        modes address the cassette by the scrubbed content. Frames handed
+        to the core (record_send/record_recv, replay send) are scrubbed
+        by the core itself — adapters pass them raw and never
+        double-scrub.
+        """
+        return scrub_frame(self._stream_scrub, direction, info, data)
 
     def next_stream_n(self, *key: Any) -> int:
         """Occurrence counter for streamed opens: the 0-based count of
@@ -66,7 +103,14 @@ class Session:
             # Informational occurrence ordinal: recoverable from disk,
             # never read back to drive matching.
             payload["n"] = n
-        return StreamRecording(self._cassette, open.adapter_id, fp, open.type, payload)
+        return StreamRecording(
+            self._cassette,
+            open.adapter_id,
+            fp,
+            open.type,
+            payload,
+            scrub=self._stream_scrub,
+        )
 
     def open_stream_replay(self, open: StreamOpen) -> StreamReplay:
         """Locate the cassette pair for a streamed open and return a
@@ -82,7 +126,12 @@ class Session:
                 f"xrr: recorded stream type {pair.req_stream.type!r}, "
                 f"requested {open.type!r}"
             )
-        return StreamReplay(fp, pair)
+        return StreamReplay(
+            fp,
+            pair,
+            scrub=self._stream_scrub,
+            scrub_info=StreamScrubInfo(adapter_id=open.adapter_id, type=open.type),
+        )
 
     def record(self, adapter: Any, req: Any, do: Callable[[], Any]) -> Any:
         """Execute one interaction according to the session mode.
