@@ -9,6 +9,12 @@ import {
   streamFingerprint,
 } from "./streamfp.js";
 import {
+  type StreamDirection,
+  type StreamScrubFn,
+  type StreamScrubInfo,
+  scrubFrame,
+} from "./streamScrub.js";
+import {
   type StreamCassette,
   StreamRecording,
   StreamReplay,
@@ -23,10 +29,42 @@ export class FileSession implements Session {
    */
   readonly streamCounter = new OccurrenceCounter();
 
+  /**
+   * Creates a session. `streamScrub` installs the frame-level scrub hook
+   * (see streamScrub.ts): every streamed frame passes through it at record
+   * time and every live send passes through it at replay time. Install the
+   * SAME hook when recording and when replaying — scrubbing is symmetric by
+   * design, and a session replaying a scrubbed cassette without the hook
+   * fails with a stream mismatch.
+   */
   constructor(
     private readonly mode: Mode,
-    private readonly cassette: Cassette
+    private readonly cassette: Cassette,
+    private readonly streamScrub?: StreamScrubFn
   ) {}
+
+  /**
+   * The session mode. Streaming adapters dispatch on it to pick the record,
+   * replay, or passthrough path at stream open.
+   */
+  get sessionMode(): Mode {
+    return this.mode;
+  }
+
+  /**
+   * Applies the session's frame scrub hook to data, returning data
+   * unchanged when no hook is installed.
+   *
+   * Adapters whose open identity derives from message bytes (the gRPC
+   * server-stream msg_hash) MUST compute the derived identity over this
+   * method's output, in record and replay mode alike, so both modes address
+   * the cassette by the scrubbed content. Frames handed to the core
+   * (recordSend / recordRecv, replay send) are scrubbed by the core
+   * itself — adapters pass them raw and never double-scrub.
+   */
+  scrubStreamFrame(dir: StreamDirection, info: StreamScrubInfo, data: Uint8Array): Uint8Array {
+    return scrubFrame(this.streamScrub, dir, info, data);
+  }
 
   async record<Req, Resp>(
     adapter: Adapter<Req, Resp>,
@@ -94,7 +132,14 @@ export class FileSession implements Session {
     // Informational occurrence ordinal: recoverable from disk, never read
     // back to drive matching.
     if (n >= 0) payload.n = n;
-    return new StreamRecording(cassette, open.adapterID, fp, open.type, payload);
+    return new StreamRecording(
+      cassette,
+      open.adapterID,
+      fp,
+      open.type,
+      payload,
+      this.streamScrub
+    );
   }
 
   /**
@@ -113,7 +158,7 @@ export class FileSession implements Session {
         `xrr: shape mismatch: recorded stream type "${pair.req.stream.type}", requested "${open.type}"`
       );
     }
-    return new StreamReplay(fp, pair);
+    return new StreamReplay(fp, pair, this.streamScrub, open.adapterID);
   }
 
   private checkStreamOpen(open: StreamOpen, want: Mode, verb: string): StreamCassette {
