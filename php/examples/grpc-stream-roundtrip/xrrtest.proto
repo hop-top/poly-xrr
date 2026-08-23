@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package xrrtest;
+
+option go_package = "xrrtest/pb";
+
+message Chunk {
+  string value = 1;
+}
+
+message Summary {
+  int32 count = 1;
+}
+
+service StreamService {
+  rpc Download(Chunk) returns (stream Chunk) {}
+  rpc Upload(stream Chunk) returns (Summary) {}
+  rpc Converse(stream Chunk) returns (stream Chunk) {}
+}
