@@ -177,9 +177,25 @@ def _recorded_rpc_error(replay: StreamReplay, message: str) -> ReplayedRpcError:
     treating the recorded error string as the status description
     (spec: Response Payload and Errors)."""
     code = status_code_from_payload(replay.resp_payload)
-    prefix = f"rpc error: code = {code.name} desc = "
-    details = message[len(prefix) :] if message.startswith(prefix) else message
-    return ReplayedRpcError(code, details)
+    return ReplayedRpcError(code, _status_details(code, message))
+
+
+def _status_details(code: grpc.StatusCode, message: str) -> str:
+    """Strip a standard client rendering down to its description.
+
+    Cassettes are cross-port by contract, and the ports spell the code
+    differently in that rendering — Go's status.Error emits Go's
+    CamelCase code name ("Unavailable"), Python's own name is
+    SCREAMING_SNAKE ("UNAVAILABLE"). Both spellings are accepted so a
+    Go-recorded cassette replays here with the same description a live
+    call would carry, instead of nesting the rendering inside itself.
+    """
+    names = {code.name, code.name.replace("_", " ").title().replace(" ", "")}
+    for name in names:
+        prefix = f"rpc error: code = {name} desc = "
+        if message.startswith(prefix):
+            return message[len(prefix) :]
+    return message
 
 
 def _stream_open(
