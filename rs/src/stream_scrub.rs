@@ -82,7 +82,8 @@ pub struct StreamScrubInfo {
 /// not covered by this hook either: they are structured, named-field YAML —
 /// the domain of record-time cassette redaction — while this hook exists
 /// for the frame byte layer that field-name matching cannot reach.
-pub type StreamScrub = Arc<dyn Fn(StreamDirection, &StreamScrubInfo, &[u8]) -> Vec<u8> + Send + Sync>;
+pub type StreamScrub =
+    Arc<dyn Fn(StreamDirection, &StreamScrubInfo, &[u8]) -> Vec<u8> + Send + Sync>;
 
 /// Apply `scrub` to `data` when a hook is installed, returning the bytes
 /// unchanged otherwise.

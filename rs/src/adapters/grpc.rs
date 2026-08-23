@@ -240,9 +240,7 @@ fn recorded_status(code: i32, msg: &str) -> Status {
 /// `Ok(None)` by the callers of this helper, so it never reaches here.
 fn map_core_err(err: XrrError, resp_payload: &Value) -> Status {
     match err {
-        XrrError::StreamRecordedError(msg) => {
-            recorded_status(status_code_from(resp_payload), &msg)
-        }
+        XrrError::StreamRecordedError(msg) => recorded_status(status_code_from(resp_payload), &msg),
         XrrError::StreamMismatch { .. } => Status::failed_precondition(err.to_string()),
         other => Status::internal(other.to_string()),
     }
@@ -260,11 +258,32 @@ fn map_core_err(err: XrrError, resp_payload: &Value) -> Status {
 ///
 /// Messages cross this boundary as protobuf wire bytes; use [`to_wire`] and
 /// [`from_wire`] at the caller's typed edge.
+// One handle exists per RPC, and callers pattern-match the variants
+// directly — boxing the replay handle would push an allocation and a
+// deref into every call site to shrink a short-lived value that is never
+// stored in bulk.
+#[allow(clippy::large_enum_variant)]
 pub enum GrpcStream<'s> {
     /// Transparent: the caller drives the live stream itself.
     Passthrough,
     Record(RecordStream<'s>),
     Replay(ReplayStream),
+}
+
+impl std::fmt::Debug for GrpcStream<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            GrpcStream::Passthrough => f.write_str("GrpcStream::Passthrough"),
+            GrpcStream::Record(r) => f
+                .debug_struct("GrpcStream::Record")
+                .field("fingerprint", &r.fingerprint())
+                .finish(),
+            GrpcStream::Replay(r) => f
+                .debug_struct("GrpcStream::Replay")
+                .field("fingerprint", &r.fingerprint())
+                .finish(),
+        }
+    }
 }
 
 impl<'s> GrpcStream<'s> {
@@ -328,17 +347,27 @@ pub struct RecordStream<'s> {
 impl RecordStream<'_> {
     /// The open-time fingerprint of this interaction.
     pub fn fingerprint(&self) -> String {
-        self.rec.lock().expect("recording lock").fingerprint().to_string()
+        self.rec
+            .lock()
+            .expect("recording lock")
+            .fingerprint()
+            .to_string()
     }
 
     /// Log one client→server message, observed on the live stream.
     pub fn send(&self, message: &[u8]) {
-        self.rec.lock().expect("recording lock").record_send(message);
+        self.rec
+            .lock()
+            .expect("recording lock")
+            .record_send(message);
     }
 
     /// Log one server→client message, observed on the live stream.
     pub fn recv(&self, message: &[u8]) {
-        self.rec.lock().expect("recording lock").record_recv(message);
+        self.rec
+            .lock()
+            .expect("recording lock")
+            .record_recv(message);
     }
 
     /// Log the client closing its send side.
@@ -363,7 +392,11 @@ impl RecordStream<'_> {
     /// and an empty status message is synthesized into a non-empty string.
     pub fn finish_err(&self, status: &Status) -> Result<(), XrrError> {
         let code = status.code() as i32;
-        let rendered = format!("rpc error: code = {:?} desc = {}", status.code(), status.message());
+        let rendered = format!(
+            "rpc error: code = {:?} desc = {}",
+            status.code(),
+            status.message()
+        );
         self.finish(code, Some(rendered))
     }
 
@@ -371,7 +404,11 @@ impl RecordStream<'_> {
         let (code, err) = match err {
             Some(e) => {
                 let code = if code == OK_CODE { UNKNOWN_CODE } else { code };
-                let e = if e.is_empty() { "grpc: stream failed".to_string() } else { e };
+                let e = if e.is_empty() {
+                    "grpc: stream failed".to_string()
+                } else {
+                    e
+                };
                 (code, Some(e))
             }
             None => (code, None),
@@ -393,7 +430,11 @@ pub struct ReplayStream {
 impl ReplayStream {
     /// The open-time fingerprint of this interaction.
     pub fn fingerprint(&self) -> String {
-        self.rp.lock().expect("replay lock").fingerprint().to_string()
+        self.rp
+            .lock()
+            .expect("replay lock")
+            .fingerprint()
+            .to_string()
     }
 
     /// Validate the i-th client message against recorded send frame i.
