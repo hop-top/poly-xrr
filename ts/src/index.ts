@@ -30,7 +30,16 @@ export {
   counterStreamFingerprint,
   msgHash,
   serverStreamFingerprint,
+  streamFingerprint,
 } from "./streamfp.js";
+export type { StreamOpen } from "./streamfp.js";
+export {
+  ErrEndOfStream,
+  StreamMismatchError,
+  StreamRecording,
+  StreamReplay,
+} from "./streamSession.js";
+export type { StreamCassette } from "./streamSession.js";
 export { ExecAdapter } from "./adapters/exec.js";
 export type { ExecRequest, ExecResponse } from "./adapters/exec.js";
 export { HttpAdapter } from "./adapters/http.js";
