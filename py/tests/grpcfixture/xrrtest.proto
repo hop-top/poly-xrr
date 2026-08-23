@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+// Test-only service exercising all three streamed RPC kinds against a
+// real grpcio server. Names mirror the spec's worked examples so the
+// fixture fingerprints line up with spec/cassette-format-streaming.md.
+package xrrtest;
+
+message Chunk {
+  string body = 1;
+}
+
+service Streamer {
+  // server-streaming
+  rpc Download(Chunk) returns (stream Chunk);
+  // client-streaming
+  rpc Upload(stream Chunk) returns (Chunk);
+  // bidirectional
+  rpc Converse(stream Chunk) returns (stream Chunk);
+}

@@ -10,6 +10,8 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "grpcio>=1.60",
+    "grpcio-tools>=1.60",
     "pytest>=9.0.2",
     "ruff>=0.15.8",
 ]
@@ -33,3 +35,12 @@ include = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff]
+# protoc output is machine-generated and not ours to style.
+extend-exclude = ["tests/grpcfixture/xrrtest_pb2.py", "tests/grpcfixture/xrrtest_pb2_grpc.py"]
+
+[tool.pytest.ini_options]
+# tests/ on sys.path so the generated gRPC stubs import as
+# `grpcfixture.*` without a flat-layout sys.path hack in each test.
+pythonpath = ["tests"]
