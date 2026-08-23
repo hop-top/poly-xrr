@@ -1,6 +1,7 @@
 package xrr
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -177,8 +178,10 @@ type StreamOpen struct {
 
 // streamCanonical assembles the spec's canonical JSON for an open: the
 // adapter identity plus the injected "stream" discriminator, plus "n" when
-// n >= 0. json.Marshal sorts map keys lexicographically and emits no
-// insignificant whitespace — exactly the spec's canonical JSON.
+// n >= 0. Keys sort lexicographically with no insignificant whitespace and
+// standard JSON string escaping only — HTML-safe escaping (ampersand as
+// &, etc.) would diverge from the other ports' JSON libraries and
+// fork fingerprints.
 func streamCanonical(open StreamOpen, n int) ([]byte, error) {
 	switch open.Type {
 	case StreamServer, StreamClient, StreamBidi:
@@ -196,11 +199,13 @@ func streamCanonical(open StreamOpen, n int) ([]byte, error) {
 	if n >= 0 {
 		inputs["n"] = n
 	}
-	canonical, err := json.Marshal(inputs)
-	if err != nil {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(inputs); err != nil {
 		return nil, fmt.Errorf("xrr: stream fingerprint marshal: %w", err)
 	}
-	return canonical, nil
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
 }
 
 // StreamFingerprint computes the streaming fingerprint for an open:

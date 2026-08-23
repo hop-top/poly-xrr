@@ -560,6 +560,12 @@ Keys are shown in their sorted order; canonical JSON has no whitespace.
 Service and method names are proto identifiers (`[A-Za-z0-9_.]`), so JSON
 string escaping never varies between ports.
 
+Identity values outside that alphabet (URL-keyed identities above all) MUST
+use standard JSON string escaping only. Implementations MUST NOT apply
+HTML-safe escaping (`&`, `<`, `>` emitted as `\u0026`, `\u003c`, `\u003e`):
+the two conventions produce different canonical bytes and therefore fork
+fingerprints across ports.
+
 Because every input set includes `"stream"`, streaming canonical inputs
 are disjoint from unary ones by construction. The fingerprints themselves
 are 32-bit truncations sharing one filename namespace, so the residual

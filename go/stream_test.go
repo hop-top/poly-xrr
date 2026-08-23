@@ -108,6 +108,24 @@ func TestStreamFingerprintSSEIdentity(t *testing.T) {
 	assert.NotContains(t, pair.ReqPayload, "n", "content-addressed opens carry no ordinal")
 }
 
+func TestStreamFingerprintNoHTMLEscaping(t *testing.T) {
+	// url carries & < > — HTML-safe escaping would canonicalize them as
+	// escape sequences and fork the fingerprint from the other ports.
+	url := "https://example.test/events?a=1&cmp=<2>"
+	open := xrr.StreamOpen{
+		AdapterID: "sse",
+		Type:      xrr.StreamServer,
+		Identity:  map[string]any{"url": url},
+	}
+	fp, err := xrr.StreamFingerprint(open, -1)
+	require.NoError(t, err)
+
+	canonical := `{"stream":"server","url":"` + url + `"}`
+	sum := sha256.Sum256([]byte(canonical))
+	assert.Equal(t, hex.EncodeToString(sum[:4]), fp,
+		"canonical JSON must use standard escaping only (no HTML-safe escaping)")
+}
+
 // writeStreamedPair writes raw req/resp YAML docs as a grpc-<fp> pair in a
 // fresh temp dir and returns a cassette over it.
 func writeStreamedPair(t *testing.T, fp, req, resp string) *xrr.FileCassette {
