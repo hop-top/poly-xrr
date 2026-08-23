@@ -8,7 +8,8 @@ silently discarding the bad characters as some standard decoders do by
 default. Frame `seq: 2` is valid base64 of `blob-chunk 1`; the req file is
 fully well-formed (fingerprint `8dbfb222` correctly computed from
 `(files.FileService, Download, msg_hash("{\"path\":\"/opt/blob.bin\"}"),
-"server")`).
+"server")`, where the hashed bytes are that literal 24-byte ASCII string —
+frame payloads here are not protobuf; see ../README.md).
 
 The pair is deliberately NOT listed in `manifest.yaml`: `interactions`
 enumerates pairs whose replay must succeed, and neither the v1 manifest nor
