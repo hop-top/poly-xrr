@@ -97,7 +97,7 @@ def test_default_redactor_secret_value_patterns():
         "github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQR",
         "AKIAIOSFODNN7EXAMPLE",
         "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij0123456789",
-        "xoxb-123456789012-1234567890123-abcdefghijklmnopqrstuvwx",
+        "xoxb-EXAMPLE-NOT-A-REAL-TOKEN-000",
         "-----BEGIN RSA PRIVATE KEY-----",
         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIn0.abcdefghijklmnop",
     ]
