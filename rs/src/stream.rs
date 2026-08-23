@@ -310,7 +310,7 @@ impl StreamedPair {
     /// Pair-level `seq` rules: no duplicates across the pair, `end.seq`
     /// is the interaction maximum. (Per-list ascending order is enforced
     /// at parse; sparse numbering is reader-accepted per spec.)
-    fn validate_seqs(&self) -> Result<(), XrrError> {
+    pub(crate) fn validate_seqs(&self) -> Result<(), XrrError> {
         let mut all: Vec<u64> = Vec::new();
         all.extend(self.req.stream.frames.iter().map(|f| f.seq));
         all.extend(self.resp.stream.frames.iter().map(|f| f.seq));
@@ -488,5 +488,6 @@ fn emit_event(out: &mut String, ev: &StreamEvent) {
 // ── fingerprinting + occurrence counters ─────────────────────────────────────
 
 pub use crate::stream_fingerprint::{
-    grpc_counter_fingerprint, grpc_server_fingerprint, msg_hash, StreamCounters,
+    grpc_counter_fingerprint, grpc_server_fingerprint, msg_hash, stream_fingerprint,
+    StreamCounters, StreamOpen,
 };

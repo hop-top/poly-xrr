@@ -1,8 +1,13 @@
-//! Streamed fingerprint algorithms + per-session occurrence counters
+//! Streamed fingerprint core + per-session occurrence counters
 //! (spec/cassette-format-streaming.md, Fingerprinting / gRPC mapping).
-//! Re-exported through `crate::stream`.
+//!
+//! The split is structural: this layer owns canonical-JSON assembly, the
+//! `"stream"` discriminator, hashing/truncation, and the counter lifecycle;
+//! an adapter supplies only its canonical identity inputs, its payload
+//! shape, and whether the open is counter-addressed. The gRPC helpers are
+//! thin wrappers over the core. Re-exported through `crate::stream`.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Mutex;
 
 use sha2::{Digest, Sha256};
@@ -22,22 +27,98 @@ fn json_str(s: &str) -> String {
     serde_json::to_string(s).expect("string serializes")
 }
 
-/// gRPC server-stream fingerprint: the single request message is available
-/// at open and is content-addressed via `msg_hash`, mirroring unary.
-/// Canonical JSON built byte-for-byte in sorted key order.
-pub fn grpc_server_fingerprint(service: &str, method: &str, message: &[u8]) -> String {
-    let canonical = format!(
-        r#"{{"method":{},"msg_hash":{},"service":{},"stream":"server"}}"#,
-        json_str(method),
-        json_str(&msg_hash(message)),
-        json_str(service),
-    );
-    sha256_8(canonical.as_bytes())
+/// Everything a replay needs to locate a streamed cassette at open time.
+///
+/// The adapter supplies its canonical fingerprint inputs (`identity`), its
+/// open-request payload (`payload`), and whether the open is disambiguated
+/// by the session's occurrence counter (`counter`); the core owns
+/// canonical-JSON assembly, the `"stream"` discriminator,
+/// hashing/truncation, and the counter lifecycle.
+#[derive(Debug, Clone)]
+pub struct StreamOpen {
+    pub adapter_id: String,
+    pub stream_type: StreamType,
+    /// Canonical fingerprint inputs (for gRPC: service, method, and
+    /// msg_hash for content-addressed server streams; for an SSE-style
+    /// adapter: url). Keys `"stream"` and `"n"` are reserved for core
+    /// injection. BTreeMap gives the spec's sorted-key canonical order;
+    /// values must serialize deterministically (strings and integers in
+    /// practice).
+    pub identity: BTreeMap<String, serde_json::Value>,
+    /// Counter-addressed open: the identity does not fully identify the
+    /// interaction, so the session's occurrence counter — keyed by
+    /// (adapter id, stream type, identity) — supplies the 0-based ordinal
+    /// `n`, injected as canonical input `"n"` and informational payload
+    /// field `"n"`.
+    pub counter: bool,
+    /// Adapter-defined open-request payload persisted to the req file.
+    pub payload: serde_yaml::Mapping,
 }
 
-/// gRPC client/bidi fingerprint: no message at open, so the 0-based
-/// occurrence counter `n` disambiguates repeated opens of one tuple.
-/// Always included, even when 0.
+/// Canonical JSON for an open: the adapter identity plus the injected
+/// `"stream"` discriminator, plus `"n"` when given. BTreeMap iteration is
+/// sorted-key order and serde_json emits no insignificant whitespace —
+/// exactly the spec's canonical JSON.
+fn stream_canonical(open: &StreamOpen, n: Option<u64>) -> Result<String, XrrError> {
+    let mut inputs: BTreeMap<&str, serde_json::Value> = BTreeMap::new();
+    for (k, v) in &open.identity {
+        if k == "stream" || k == "n" {
+            return Err(XrrError::InvalidStream(format!(
+                "stream identity key {k:?} is reserved for core injection"
+            )));
+        }
+        inputs.insert(k, v.clone());
+    }
+    inputs.insert("stream", open.stream_type.as_str().into());
+    if let Some(n) = n {
+        inputs.insert("n", n.into());
+    }
+    Ok(serde_json::to_string(&inputs)?)
+}
+
+/// Streaming fingerprint for an open: `sha256(canonical_json)[:8]`.
+/// Counter-addressed opens require the 0-based occurrence ordinal `n`
+/// (always hashed, even when 0); content-addressed opens ignore it — their
+/// identity already carries the content hash.
+pub fn stream_fingerprint(open: &StreamOpen, n: Option<u64>) -> Result<String, XrrError> {
+    let n = match (open.counter, n) {
+        (true, None) => {
+            return Err(XrrError::InvalidStream(
+                "counter-addressed stream open requires an occurrence n".into(),
+            ))
+        }
+        (true, some) => some,
+        (false, _) => None,
+    };
+    Ok(sha256_8(stream_canonical(open, n)?.as_bytes()))
+}
+
+fn grpc_identity(service: &str, method: &str) -> BTreeMap<String, serde_json::Value> {
+    BTreeMap::from([
+        ("service".to_string(), serde_json::Value::from(service)),
+        ("method".to_string(), serde_json::Value::from(method)),
+    ])
+}
+
+/// gRPC server-stream fingerprint — thin wrapper over the core: the single
+/// request message is available at open and is content-addressed via
+/// `msg_hash`, mirroring unary.
+pub fn grpc_server_fingerprint(service: &str, method: &str, message: &[u8]) -> String {
+    let mut identity = grpc_identity(service, method);
+    identity.insert("msg_hash".to_string(), msg_hash(message).into());
+    let open = StreamOpen {
+        adapter_id: "grpc".into(),
+        stream_type: StreamType::Server,
+        identity,
+        counter: false,
+        payload: serde_yaml::Mapping::new(),
+    };
+    stream_fingerprint(&open, None).expect("grpc identity is canonical")
+}
+
+/// gRPC client/bidi fingerprint — thin wrapper over the core: no message at
+/// open, so the 0-based occurrence counter `n` disambiguates repeated opens
+/// of one tuple. Always included, even when 0.
 pub fn grpc_counter_fingerprint(
     service: &str,
     method: &str,
@@ -49,14 +130,14 @@ pub fn grpc_counter_fingerprint(
             "server streams are content-addressed; use grpc_server_fingerprint".into(),
         ));
     }
-    let canonical = format!(
-        r#"{{"method":{},"n":{},"service":{},"stream":"{}"}}"#,
-        json_str(method),
-        n,
-        json_str(service),
-        stream_type.as_str(),
-    );
-    Ok(sha256_8(canonical.as_bytes()))
+    let open = StreamOpen {
+        adapter_id: "grpc".into(),
+        stream_type,
+        identity: grpc_identity(service, method),
+        counter: true,
+        payload: serde_yaml::Mapping::new(),
+    };
+    stream_fingerprint(&open, Some(n))
 }
 
 /// Per-session occurrence counters: one session object is one counter
@@ -72,14 +153,33 @@ impl StreamCounters {
         Self::default()
     }
 
-    /// Returns the 0-based occurrence for this open, then increments.
-    pub fn next(&self, service: &str, method: &str, stream_type: StreamType) -> u64 {
-        let key = format!("{service}/{method}/{}", stream_type.as_str());
+    fn next_key(&self, key: String) -> u64 {
         let mut counts = self.counts.lock().expect("counter lock");
         let entry = counts.entry(key).or_insert(0);
         let n = *entry;
         *entry += 1;
         n
+    }
+
+    /// Consume the occurrence for a counter-addressed open, keyed by the
+    /// adapter id plus the canonical identity sans `"n"` — the adapter's
+    /// identifying tuple.
+    pub fn next_open(&self, open: &StreamOpen) -> Result<u64, XrrError> {
+        let base = stream_canonical(open, None)?;
+        Ok(self.next_key(format!("{}\0{}", open.adapter_id, base)))
+    }
+
+    /// gRPC-shaped convenience: counts exactly as a counter-addressed gRPC
+    /// `StreamOpen` of the same tuple would, so manual fingerprinting and
+    /// session opens share one counter domain.
+    pub fn next(&self, service: &str, method: &str, stream_type: StreamType) -> u64 {
+        let canonical = format!(
+            r#"{{"method":{},"service":{},"stream":"{}"}}"#,
+            json_str(method),
+            json_str(service),
+            stream_type.as_str(),
+        );
+        self.next_key(format!("grpc\0{canonical}"))
     }
 }
 
@@ -120,6 +220,11 @@ mod tests {
             "2bebfd6f"
         );
         assert_eq!(
+            grpc_counter_fingerprint("files.FileService", "Upload", StreamType::Client, 1)
+                .unwrap(),
+            "b27b5fe1"
+        );
+        assert_eq!(
             grpc_counter_fingerprint("chat.ChatService", "Converse", StreamType::Bidi, 0)
                 .unwrap(),
             "c6233d2e"
@@ -128,26 +233,31 @@ mod tests {
 
     #[test]
     fn canonical_json_matches_spec_byte_for_byte() {
-        // Canonical strings shown in the spec's vector table.
-        let canonical = format!(
-            r#"{{"method":{},"msg_hash":{},"service":{},"stream":"server"}}"#,
-            json_str("Download"),
-            json_str("f1e315a5"),
-            json_str("files.FileService"),
-        );
+        // Canonical strings shown in the spec's vector table, produced by
+        // the generic core.
+        let mut identity = grpc_identity("files.FileService", "Download");
+        identity.insert("msg_hash".to_string(), "f1e315a5".into());
+        let open = StreamOpen {
+            adapter_id: "grpc".into(),
+            stream_type: StreamType::Server,
+            identity,
+            counter: false,
+            payload: serde_yaml::Mapping::new(),
+        };
         assert_eq!(
-            canonical,
+            stream_canonical(&open, None).unwrap(),
             r#"{"method":"Download","msg_hash":"f1e315a5","service":"files.FileService","stream":"server"}"#
         );
-        let canonical = format!(
-            r#"{{"method":{},"n":{},"service":{},"stream":"{}"}}"#,
-            json_str("Upload"),
-            0,
-            json_str("files.FileService"),
-            StreamType::Client.as_str(),
-        );
+
+        let open = StreamOpen {
+            adapter_id: "grpc".into(),
+            stream_type: StreamType::Client,
+            identity: grpc_identity("files.FileService", "Upload"),
+            counter: true,
+            payload: serde_yaml::Mapping::new(),
+        };
         assert_eq!(
-            canonical,
+            stream_canonical(&open, Some(0)).unwrap(),
             r#"{"method":"Upload","n":0,"service":"files.FileService","stream":"client"}"#
         );
     }
@@ -160,11 +270,55 @@ mod tests {
     }
 
     #[test]
+    fn reserved_identity_keys_rejected() {
+        for reserved in ["stream", "n"] {
+            let open = StreamOpen {
+                adapter_id: "x".into(),
+                stream_type: StreamType::Bidi,
+                identity: BTreeMap::from([(reserved.to_string(), serde_json::Value::from(1))]),
+                counter: false,
+                payload: serde_yaml::Mapping::new(),
+            };
+            assert!(
+                matches!(stream_fingerprint(&open, None), Err(XrrError::InvalidStream(_))),
+                "identity key {reserved:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn counter_open_requires_n() {
+        let open = StreamOpen {
+            adapter_id: "grpc".into(),
+            stream_type: StreamType::Bidi,
+            identity: grpc_identity("s.S", "M"),
+            counter: true,
+            payload: serde_yaml::Mapping::new(),
+        };
+        assert!(stream_fingerprint(&open, None).is_err());
+    }
+
+    #[test]
     fn counters_are_per_tuple() {
         let c = StreamCounters::new();
         assert_eq!(c.next("s.S", "M", StreamType::Client), 0);
         assert_eq!(c.next("s.S", "M", StreamType::Client), 1);
         assert_eq!(c.next("s.S", "M", StreamType::Bidi), 0);
         assert_eq!(c.next("s.S", "Other", StreamType::Client), 0);
+    }
+
+    #[test]
+    fn manual_next_and_open_keyed_count_share_one_domain() {
+        let c = StreamCounters::new();
+        let open = StreamOpen {
+            adapter_id: "grpc".into(),
+            stream_type: StreamType::Client,
+            identity: grpc_identity("s.S", "M"),
+            counter: true,
+            payload: serde_yaml::Mapping::new(),
+        };
+        assert_eq!(c.next("s.S", "M", StreamType::Client), 0);
+        assert_eq!(c.next_open(&open).unwrap(), 1);
+        assert_eq!(c.next("s.S", "M", StreamType::Client), 2);
     }
 }

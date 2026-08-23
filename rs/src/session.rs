@@ -2,6 +2,7 @@ use crate::{
     cassette::FileCassette, error::XrrError, stream::StreamCounters, Adapter,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
     Record,
     Replay,
@@ -21,6 +22,14 @@ impl Session {
             cassette,
             stream_counters: StreamCounters::new(),
         }
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    pub(crate) fn cassette(&self) -> &FileCassette {
+        &self.cassette
     }
 
     /// Occurrence counters for streamed fingerprints: one session object
