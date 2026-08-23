@@ -58,7 +58,7 @@ resp2, err := s2.Record(ctx, adapter, req, do)
 |-------|----------------------|--------------------------------------------|---------------|
 | exec  | shell commands       | argv + stdin                               | all¹          |
 | http  | HTTP requests        | method + path+query + sha256(body)[:8]     | all           |
-| grpc  | gRPC calls + streams²| service + method + sha256(proto-bytes)[:8] | go only       |
+| grpc  | gRPC calls + streams²| service + method + sha256(proto-bytes)[:8] | go, php³      |
 | redis | Redis commands       | command + args                             | all           |
 | sql   | SQL queries          | normalized query + args                    | all           |
 
@@ -68,6 +68,9 @@ non-empty — a backward-compatible extension for per-directory isolation
 
 ² Unary fingerprint shown; streamed RPCs (server / client / bidi) use
 stream-specific fingerprints — see "Streaming (gRPC)" below.
+
+³ The PHP adapter covers streamed RPCs only; unary calls pass through to
+the stock client. See "Streaming (gRPC)" for its seam and runtime caveats.
 
 ### Exec adapter: per-directory isolation (Go-only extension)
 
@@ -110,6 +113,26 @@ conn2, err := grpc.NewClient(target,
 // ... the same RPCs replay the recorded conversation, errors included
 ```
 
+In PHP the same three modes ride grpc-php's documented
+`grpc_call_invoker` channel option, so no generated code changes:
+
+```php
+// Record once against the real server
+$s = new Session(Mode::Record, new FileCassette('./cassettes'));
+$client = new MyServiceClient($target, [
+    'credentials'       => ChannelCredentials::createInsecure(),
+    'grpc_call_invoker' => new XrrCallInvoker($s),
+]);
+// ... run your streaming RPCs; every message is teed into cassettes
+
+// Replay everywhere — no server, no network, no ext-grpc needed
+$s2 = new Session(Mode::Replay, new FileCassette('./cassettes'));
+$client2 = new MyServiceClient($target, [
+    'credentials'       => ChannelCredentials::createInsecure(),
+    'grpc_call_invoker' => new XrrCallInvoker($s2),
+]);
+```
+
 A streamed interaction is one req/resp cassette pair carrying a frame log
 (the `stream` envelope extension). Replay validates sent messages
 byte-for-byte and serves received messages in recorded order, ending with
@@ -121,15 +144,32 @@ semantics: [spec/cassette-format-streaming.md](spec/cassette-format-streaming.md
   decoded frame bytes, applied identically at record and replay (base64
   makes after-the-fact cassette scrubbing impossible — the hook is the
   only seam). Install the same hook on the recording and replaying
-  session. Other ports have no hook yet: don't tape secret-bearing
-  streams there (exec-style stdin/env is the classic trap).
-- **Every port records and replays streams; the gRPC adapter is Go-only
-  today.** ts / py / rs / php ship the same stream session API as Go —
-  open a stream recording, append frames, finish; open a replay,
-  send/receive against the recorded conversation — with adapter-supplied
-  identities, so any port can tape and serve streamed interactions
-  programmatically and replay cassettes recorded by any other. Only the
-  Go port ships the gRPC streaming interceptor on top of it.
+  session. PHP ships the same seam as a `StreamScrub` implementation
+  passed to `new Session(...)`. ts / rs / py have no hook yet: don't tape
+  secret-bearing streams there (exec-style stdin/env is the classic trap).
+- **Every port records and replays streams; Go and PHP ship the gRPC
+  adapter.** ts / py / rs ship the same stream session API as Go — open a
+  stream recording, append frames, finish; open a replay, send/receive
+  against the recorded conversation — with adapter-supplied identities, so
+  any port can tape and serve streamed interactions programmatically and
+  replay cassettes recorded by any other. Go and PHP additionally ship a
+  gRPC adapter on top of it.
+- **PHP runtime caveats.** Recording needs `ext-grpc`; replay does not
+  (replaying calls open no channel, so a replay suite runs with the
+  extension absent). `ext-grpc`'s batch API is unconditionally blocking
+  with no non-blocking poll, so a single PHP process drives a bidi RPC
+  half-duplex — it cannot write while blocked in a read. Bound long
+  streams with the gRPC call deadline, not `max_execution_time`, and drive
+  them from CLI: php-fpm consumes a worker per blocked stream, Swoole's
+  hooks cannot see ext-grpc's I/O, and RoadRunner degrades streaming
+  methods to unary at codegen.
+- **PHP frames are captured, never re-serialized.** Neither PHP protobuf
+  runtime offers deterministic serialization (map entries are unordered,
+  and the pure-PHP and C runtimes can emit different bytes for the same
+  message), so the adapter records the raw wire buffer each message
+  actually crossed the boundary as. Re-marshalling a decoded message to
+  reproduce frame bytes would silently break byte-level send validation
+  and content-addressed fingerprints.
 - Unary RPCs keep the existing unary cassette shape — nothing migrates.
 
 ## Cross-process e2e (XRR_MODE + XRR_CASSETTE_DIR)
