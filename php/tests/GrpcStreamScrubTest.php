@@ -189,6 +189,106 @@ class GrpcStreamScrubTest extends TestCase
             file_get_contents($this->dir . '/grpc-2bebfd6f.req.yaml')
         );
     }
+
+    /**
+     * Clause 2: the hook runs at exactly the specified points and nowhere
+     * else. Half-close and the terminal carry no payload; recorded recv
+     * frames are never re-scrubbed; and bytes past the last recorded send
+     * are never compared, so they are never scrubbed.
+     */
+    public function testInvocationPoints(): void
+    {
+        $trace = new TracingScrub();
+        $open  = GrpcStream::open(
+            $this->session(Mode::Record, $trace),
+            StreamType::Bidi,
+            'chat.ChatService',
+            'Converse'
+        );
+
+        $record = $this->session(Mode::Record, $trace);
+        $rec    = $record->openStreamRecord($open);
+        $rec->recordSend('a');
+        $rec->recordRecv('b');
+        $rec->recordHalfClose();          // no payload — not scrubbed
+        $rec->finish(['status_code' => 0]); // terminal — not scrubbed
+        $this->assertSame(['send:a', 'recv:b'], $trace->seen);
+
+        $trace->seen = [];
+        $replay      = $this->session(Mode::Replay, $trace);
+        $rep         = $replay->openStreamReplay($open);
+        $rep->send('a');
+        $rep->recv();      // recorded frame — never re-scrubbed
+        $rep->halfClose();
+        $this->assertSame(['send:a'], $trace->seen);
+
+        // Past the last recorded send: never compared, so never scrubbed.
+        $trace->seen = [];
+        $rep->send('overrun');
+        $this->assertSame([], $trace->seen);
+    }
+
+    /**
+     * Clause 6: the hook MAY change a frame's length; neither side assumes
+     * byte-count preservation.
+     */
+    public function testLengthChangingHook(): void
+    {
+        $expand = new ExpandingScrub();
+        $open   = GrpcStream::open(
+            $this->session(Mode::Record, $expand),
+            StreamType::Bidi,
+            'chat.ChatService',
+            'Converse'
+        );
+
+        $record = $this->session(Mode::Record, $expand);
+        $rec    = $record->openStreamRecord($open);
+        $rec->recordSend('k=' . ExpandingScrub::SECRET);
+        $rec->recordRecv('v=' . ExpandingScrub::SECRET);
+        $rec->recordHalfClose();
+        $rec->finish(['status_code' => 0]);
+
+        $replay = $this->session(Mode::Replay, $expand);
+        $rep    = $replay->openStreamReplay($open);
+        $rep->send('k=' . ExpandingScrub::SECRET); // green despite length change
+        $this->assertSame('v=' . ExpandingScrub::LONG, $rep->recv());
+    }
+}
+
+/** Records every invocation as "<dir>:<bytes>", returning data unchanged. */
+final class TracingScrub implements StreamScrub
+{
+    /** @var list<string> */
+    public array $seen = [];
+
+    public function scrub(
+        StreamDirection $dir,
+        string $adapterID,
+        StreamType $type,
+        string $data
+    ): string {
+        $this->seen[] = $dir->value . ':' . $data;
+
+        return $data;
+    }
+}
+
+/** Deterministic mask that deliberately lengthens the frame. */
+final class ExpandingScrub implements StreamScrub
+{
+    public const SECRET = 'hunter2-FAKE-TOKEN-0123456789';
+
+    public const LONG = '[REDACTED-MUCH-LONGER-PLACEHOLDER]';
+
+    public function scrub(
+        StreamDirection $dir,
+        string $adapterID,
+        StreamType $type,
+        string $data
+    ): string {
+        return str_replace(self::SECRET, self::LONG, $data);
+    }
 }
 
 /** Deterministic, length-preserving mask for a GitHub-shaped token. */

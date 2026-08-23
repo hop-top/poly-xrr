@@ -190,3 +190,92 @@ func TestStreamScrubAppliedExactlyOnce(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("pong#"), got, "recorded frames are delivered verbatim, never re-scrubbed")
 }
+
+// TestStreamScrubInvocationPoints — spec clause 2: the hook runs at exactly
+// the specified points and nowhere else. Half-close and the terminal carry
+// no payload; recorded recv frames are delivered verbatim; and bytes past
+// the last recorded send are never compared, so they are never scrubbed.
+func TestStreamScrubInvocationPoints(t *testing.T) {
+	var seen []string
+	trace := func(dir xrr.StreamDirection, _ xrr.StreamScrubInfo, data []byte) []byte {
+		seen = append(seen, string(dir)+":"+string(data))
+		return data
+	}
+	dir := t.TempDir()
+	open := grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Converse", nil)
+
+	recS := xrr.NewSessionWithStreamScrub(xrr.ModeRecord, xrr.NewFileCassette(dir), trace)
+	rec, err := recS.OpenStreamRecord(open)
+	require.NoError(t, err)
+	rec.RecordSend([]byte("a"))
+	rec.RecordRecv([]byte("b"))
+	rec.RecordHalfClose() // no payload — not scrubbed
+	require.NoError(t, rec.Finish(map[string]any{"status_code": 0}, nil))
+	assert.Equal(t, []string{"send:a", "recv:b"}, seen, "record: one call per frame, both directions")
+
+	seen = nil
+	repS := xrr.NewSessionWithStreamScrub(xrr.ModeReplay, xrr.NewFileCassette(dir), trace)
+	rep, err := repS.OpenStreamReplay(open)
+	require.NoError(t, err)
+	require.NoError(t, rep.Send([]byte("a")))
+	_, err = rep.Recv() // recorded frame — never re-scrubbed
+	require.NoError(t, err)
+	require.NoError(t, rep.HalfClose())
+	assert.Equal(t, []string{"send:a"}, seen, "replay: live sends only")
+
+	seen = nil
+	_ = rep.Send([]byte("overrun")) // past the last recorded send
+	assert.Empty(t, seen, "bytes that are never compared are never scrubbed")
+}
+
+// TestStreamScrubLengthChange — spec clause 6: the hook MAY change a
+// frame's length; neither side assumes byte-count preservation.
+func TestStreamScrubLengthChange(t *testing.T) {
+	const long = "[REDACTED-MUCH-LONGER-PLACEHOLDER]"
+	expand := func(_ xrr.StreamDirection, _ xrr.StreamScrubInfo, data []byte) []byte {
+		return bytes.ReplaceAll(data, []byte(scrubSecret), []byte(long))
+	}
+	dir := t.TempDir()
+	open := grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Converse", nil)
+
+	recS := xrr.NewSessionWithStreamScrub(xrr.ModeRecord, xrr.NewFileCassette(dir), expand)
+	rec, err := recS.OpenStreamRecord(open)
+	require.NoError(t, err)
+	rec.RecordSend([]byte("k=" + scrubSecret))
+	rec.RecordRecv([]byte("v=" + scrubSecret))
+	rec.RecordHalfClose()
+	require.NoError(t, rec.Finish(map[string]any{"status_code": 0}, nil))
+
+	pair, err := xrr.NewFileCassette(dir).LoadStream("grpc", rec.Fingerprint())
+	require.NoError(t, err)
+	assert.Equal(t, []byte("k="+long), pair.Req.Frames[0].Message)
+
+	repS := xrr.NewSessionWithStreamScrub(xrr.ModeReplay, xrr.NewFileCassette(dir), expand)
+	rep, err := repS.OpenStreamReplay(open)
+	require.NoError(t, err)
+	require.NoError(t, rep.Send([]byte("k="+scrubSecret)), "green despite the length change")
+	got, err := rep.Recv()
+	require.NoError(t, err)
+	assert.Equal(t, []byte("v="+long), got)
+}
+
+// TestStreamScrubNoAliasing — spec clause 8: a caller mutating the buffer
+// it handed over (or the one the hook returned) cannot reach stored frames.
+func TestStreamScrubNoAliasing(t *testing.T) {
+	passthrough := func(_ xrr.StreamDirection, _ xrr.StreamScrubInfo, data []byte) []byte {
+		return data
+	}
+	dir := t.TempDir()
+	recS := xrr.NewSessionWithStreamScrub(xrr.ModeRecord, xrr.NewFileCassette(dir), passthrough)
+	rec, err := recS.OpenStreamRecord(grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Converse", nil))
+	require.NoError(t, err)
+	live := []byte("ping")
+	rec.RecordSend(live)
+	live[0] = 'X' // mutate after handing it over — must not reach disk
+	rec.RecordHalfClose()
+	require.NoError(t, rec.Finish(map[string]any{"status_code": 0}, nil))
+
+	pair, err := xrr.NewFileCassette(dir).LoadStream("grpc", rec.Fingerprint())
+	require.NoError(t, err)
+	assert.Equal(t, []byte("ping"), pair.Req.Frames[0].Message)
+}
