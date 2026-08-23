@@ -7,6 +7,8 @@ import (
 
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/hpack"
+
+	"hop.top/xrr"
 )
 
 // HTTP/2 wire decoding for the transport-level gRPC adapter.
@@ -65,7 +67,7 @@ type wireEvent struct {
 	streamID uint32
 	kind     wireEventKind
 	// headers is set for wireHeaders: the decoded header fields, already
-	// sanitized (see sanitizeHeaders).
+	// sanitized by the core redactor (see sanitizeHeaders).
 	headers []hpack.HeaderField
 	// message is set for wireMessage: one complete gRPC message's bytes,
 	// with the 5-byte length prefix stripped.
@@ -143,14 +145,14 @@ func (d *streamDecoder) feed(data []byte) ([][]byte, error) {
 type connDecoder struct {
 	framer  *http2.Framer
 	streams map[uint32]*streamDecoder
-	redact  headerRedactor
+	redact  *xrr.Redactor
 	// queued holds messages decoded from one DATA frame beyond the first.
 	// One DATA frame can carry several complete gRPC messages, and each
 	// must surface as its own event.
 	queued pendingMsgs
 }
 
-func newConnDecoder(r io.Reader, redact headerRedactor) *connDecoder {
+func newConnDecoder(r io.Reader, redact *xrr.Redactor) *connDecoder {
 	fr := http2.NewFramer(io.Discard, r)
 	// ReadMetaHeaders makes the Framer merge HEADERS + CONTINUATION and
 	// HPACK-decode them for us. Decoding is mandatory, not a convenience:

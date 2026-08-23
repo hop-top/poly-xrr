@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"hop.top/xrr"
 )
 
 // Header sanitization is defense in depth, and it is worth being explicit
@@ -18,6 +20,13 @@ import (
 // if the format ever gained a metadata field. These tests therefore assert
 // on the sanitizer directly rather than on cassette contents, which would
 // pass whether or not the sanitizer ran.
+//
+// The policy under test is the core xrr.Redactor's, shared with every other
+// port — this package holds no redaction policy of its own.
+
+// testRedactor is the redactor the adapter builds at record time, with the
+// env-driven config left at its secure defaults.
+func testRedactor() *xrr.Redactor { return xrr.NewRedactor(xrr.RedactConfig{}) }
 
 func TestSanitizeHeadersRedactsCredentials(t *testing.T) {
 	const secret = "s3cr3t-token-value-not-in-cassettes"
@@ -32,7 +41,7 @@ func TestSanitizeHeadersRedactsCredentials(t *testing.T) {
 		{Name: "grpc-timeout", Value: "29998683u"},
 	}
 
-	got := sanitizeHeaders(headerRedactor{}, fields)
+	got := sanitizeHeaders(testRedactor(), fields)
 	require.Len(t, got, len(fields))
 
 	byName := map[string]string{}
@@ -67,7 +76,7 @@ func TestSanitizeHeadersRedactsByValuePattern(t *testing.T) {
 		{Name: "x-trace", Value: "ghp_abcdefghijklmnopqrstuvwxyz0123456789"},
 		{Name: "x-note", Value: "nothing interesting here"},
 	}
-	got := sanitizeHeaders(headerRedactor{}, fields)
+	got := sanitizeHeaders(testRedactor(), fields)
 	assert.Equal(t, "<redacted:X-TRACE>", got[0].Value)
 	assert.Equal(t, "nothing interesting here", got[1].Value)
 }
@@ -75,10 +84,10 @@ func TestSanitizeHeadersRedactsByValuePattern(t *testing.T) {
 // Placeholders depend only on the header name, never on the secret, so
 // re-recording the same traffic yields byte-identical cassettes.
 func TestSanitizeHeadersPlaceholderIsValueIndependent(t *testing.T) {
-	a := sanitizeHeaders(headerRedactor{}, []hpack.HeaderField{
+	a := sanitizeHeaders(testRedactor(), []hpack.HeaderField{
 		{Name: "authorization", Value: "Bearer aaaaaaaaaaaaaaaaaaaaaaaa"},
 	})
-	b := sanitizeHeaders(headerRedactor{}, []hpack.HeaderField{
+	b := sanitizeHeaders(testRedactor(), []hpack.HeaderField{
 		{Name: "authorization", Value: "Bearer bbbbbbbbbbbbbbbbbbbbbbbb"},
 	})
 	assert.Equal(t, a[0].Value, b[0].Value)
@@ -91,7 +100,46 @@ func TestSanitizeHeadersDoesNotOverRedact(t *testing.T) {
 		{Name: "monkey-business", Value: "keep me"},
 		{Name: "tokenizer-mode", Value: "keep me too"},
 	}
-	got := sanitizeHeaders(headerRedactor{}, fields)
+	got := sanitizeHeaders(testRedactor(), fields)
 	assert.Equal(t, "keep me", got[0].Value)
 	assert.Equal(t, "keep me too", got[1].Value)
+}
+
+// The core redactor's word list includes ACCESS, which the retired
+// adapter-local sanitizer omitted. Header names containing it as a word are
+// therefore redacted now where they previously passed through. This is a
+// deliberate widening — it errs toward redacting a non-credential, never
+// toward leaking one — and it is pinned here so the change is visible
+// rather than incidental.
+func TestSanitizeHeadersRedactsAccessWord(t *testing.T) {
+	got := sanitizeHeaders(testRedactor(), []hpack.HeaderField{
+		{Name: "x-access-count", Value: "17"},
+		{Name: "access-control-allow-origin", Value: "*"},
+	})
+	assert.Equal(t, "<redacted:X-ACCESS-COUNT>", got[0].Value)
+	assert.Equal(t, "<redacted:ACCESS-CONTROL-ALLOW-ORIGIN>", got[1].Value)
+}
+
+// The core redactor's AWS_ exact/prefix rules reach header names too, which
+// the adapter-local sanitizer never covered.
+func TestSanitizeHeadersRedactsAWSNames(t *testing.T) {
+	got := sanitizeHeaders(testRedactor(), []hpack.HeaderField{
+		{Name: "aws-secret-access-key", Value: "wJalrXUtnFEMI/K7MDENG"},
+		{Name: "aws-region", Value: "us-east-1"},
+	})
+	assert.Equal(t, "<redacted:AWS-SECRET-ACCESS-KEY>", got[0].Value)
+	// AWS_REGION is on the core benign list: real debugging signal, no secret.
+	assert.Equal(t, "us-east-1", got[1].Value)
+}
+
+// The adapter now honours the shared XRR_REDACT_* env contract, which the
+// adapter-local sanitizer had no way to express.
+func TestSanitizeHeadersHonoursAllowList(t *testing.T) {
+	r := xrr.NewRedactor(xrr.RedactConfig{Allow: []string{"x-api-key"}})
+	got := sanitizeHeaders(r, []hpack.HeaderField{
+		{Name: "x-api-key", Value: "deliberately-fake-fixture-value"},
+		{Name: "authorization", Value: "Bearer aaaaaaaaaaaaaaaaaaaaaaaa"},
+	})
+	assert.Equal(t, "deliberately-fake-fixture-value", got[0].Value)
+	assert.Equal(t, "<redacted:AUTHORIZATION>", got[1].Value)
 }

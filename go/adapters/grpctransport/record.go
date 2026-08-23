@@ -127,7 +127,7 @@ func plainDialer(ctx context.Context, addr string) (net.Conn, error) {
 func newRecordConn(session *xrr.FileSession, conn net.Conn) net.Conn {
 	toServerR, toServerW := io.Pipe()
 	toClientR, toClientW := io.Pipe()
-	var redactor headerRedactor
+	redactor := xrr.NewRedactor(xrr.RedactConfigFromEnv())
 
 	rc := &recordConn{
 		Conn:     conn,
@@ -142,7 +142,7 @@ func newRecordConn(session *xrr.FileSession, conn net.Conn) net.Conn {
 }
 
 // decode runs one direction's decoder loop, feeding events to the tracker.
-func (c *recordConn) decode(dir direction, r io.Reader, redactor headerRedactor) {
+func (c *recordConn) decode(dir direction, r io.Reader, redactor *xrr.Redactor) {
 	defer c.wg.Done()
 	if dir == dirClientToServer {
 		// The client preface precedes the first frame and is not a frame;

@@ -6,6 +6,8 @@ import (
 
 	"golang.org/x/net/http2/hpack"
 	"google.golang.org/grpc/codes"
+
+	"hop.top/xrr"
 )
 
 // HTTP/2 header handling: sanitization and the gRPC semantics carried in
@@ -13,10 +15,21 @@ import (
 //
 // Credentials travel in HEADERS. On a live gRPC connection the request
 // header block carries `authorization`, and adopters routinely add their
-// own token headers — every one of them would otherwise land in a cassette
-// verbatim. Sanitization therefore happens at decode time, before a header
-// value can reach any recorder state — see redact.go for the policy and for
-// its relationship to the core xrr.Redactor.
+// own token headers. Sanitization happens at decode time, before a header
+// value can reach any recorder state.
+//
+// The policy is the core xrr.Redactor's — the same field-name word list,
+// benign-key table, value patterns, and <redacted:NAME> placeholders that
+// every other port applies. Headers are name/value pairs, which is exactly
+// what RedactField classifies, so no adapter-local policy exists.
+//
+// SCOPE: this is defense in depth, not the persistence guard. The cassette
+// format records no header metadata — headers are read only for routing
+// (:path), compression detection, and terminal status — so no header value
+// has a path to disk today. Message BYTES are what this adapter persists,
+// and those are covered by the core's symmetric stream scrub hook
+// (session.ScrubStreamFrame), not by field-name redaction, which cannot see
+// into opaque frame payloads.
 
 // sanitizeHeaders returns fields with credential-bearing values replaced by
 // the redactor's deterministic placeholders.
@@ -27,14 +40,14 @@ import (
 //
 // The redactor's placeholder depends only on the header NAME, never on the
 // secret, so re-recording the same traffic yields byte-identical cassettes.
-func sanitizeHeaders(r headerRedactor, fields []hpack.HeaderField) []hpack.HeaderField {
+func sanitizeHeaders(r *xrr.Redactor, fields []hpack.HeaderField) []hpack.HeaderField {
 	out := make([]hpack.HeaderField, len(fields))
 	for i, f := range fields {
 		out[i] = f
 		if strings.HasPrefix(f.Name, ":") {
 			continue
 		}
-		if v, redacted := r.redactField(f.Name, f.Value); redacted {
+		if v, redacted := r.RedactField(f.Name, f.Value); redacted {
 			out[i].Value = v
 		}
 	}
