@@ -1,10 +1,16 @@
+# Order is not a sequencing directive (see cassette-format-streaming.md,
+# Manifest Extension). These three entries sit in three distinct counter
+# domains — a server-stream open uses no counter, and the client/bidi opens
+# differ in (service, method, type) — so no open order can collide them.
+# Listed ascending by req payload `n` regardless, matching the ordering rule
+# runners must apply, so the file does not model order as arbitrary.
 interactions:
   - adapter: grpc
-    fingerprint: "ffbc4bac"
+    fingerprint: "ebbd3938"   # chat.ChatService/Ping, bidi, n=0
     streamed: true
   - adapter: grpc
-    fingerprint: "fbdff683"
+    fingerprint: "fbdff683"   # telemetry.MetricsService/Push, client, n=0
     streamed: true
   - adapter: grpc
-    fingerprint: "ebbd3938"
+    fingerprint: "ffbc4bac"   # files.FileService/Download, server (no counter)
     streamed: true
