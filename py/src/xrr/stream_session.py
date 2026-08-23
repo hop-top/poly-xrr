@@ -27,6 +27,13 @@ from .stream import (
     StreamEvent,
     StreamFrame,
 )
+from .stream_scrub import (
+    RECV,
+    SEND,
+    StreamScrubFunc,
+    StreamScrubInfo,
+    scrub_frame,
+)
 
 
 class StreamDone(Exception):
@@ -76,12 +83,15 @@ class StreamRecording:
         fingerprint: str,
         stream_type: str,
         req_payload: dict[str, Any],
+        scrub: StreamScrubFunc | None = None,
     ) -> None:
         self._cassette = cassette
         self._adapter_id = adapter_id
         self._fingerprint = fingerprint
         self._type = stream_type
         self._req_payload = req_payload
+        self._scrub = scrub
+        self._scrub_info = StreamScrubInfo(adapter_id=adapter_id, type=stream_type)
         self._opened = time.monotonic()
         self._lock = threading.Lock()
         self._seq = 0
@@ -99,22 +109,26 @@ class StreamRecording:
         return max(0, int((time.monotonic() - self._opened) * 1000))
 
     def record_send(self, message: bytes) -> None:
-        """Log one client->server message. Dropped after finish."""
+        """Log one client->server message, scrubbed by the session's
+        frame scrub hook before it is retained. Dropped after finish."""
         with self._lock:
             if self._finished:
                 return
+            msg = scrub_frame(self._scrub, SEND, self._scrub_info, message)
             self._sends.append(
-                StreamFrame(seq=self._seq, message=bytes(message), at_ms=self._elapsed_ms())
+                StreamFrame(seq=self._seq, message=bytes(msg), at_ms=self._elapsed_ms())
             )
             self._seq += 1
 
     def record_recv(self, message: bytes) -> None:
-        """Log one server->client message. Dropped after finish."""
+        """Log one server->client message, scrubbed by the session's
+        frame scrub hook before it is retained. Dropped after finish."""
         with self._lock:
             if self._finished:
                 return
+            msg = scrub_frame(self._scrub, RECV, self._scrub_info, message)
             self._recvs.append(
-                StreamFrame(seq=self._seq, message=bytes(message), at_ms=self._elapsed_ms())
+                StreamFrame(seq=self._seq, message=bytes(msg), at_ms=self._elapsed_ms())
             )
             self._seq += 1
 
@@ -171,9 +185,19 @@ class StreamReplay:
     (at_ms stays available on the loaded pair for a future opt-in
     replay-timing mode). Safe for concurrent use."""
 
-    def __init__(self, fingerprint: str, pair: StreamedPair) -> None:
+    def __init__(
+        self,
+        fingerprint: str,
+        pair: StreamedPair,
+        scrub: StreamScrubFunc | None = None,
+        scrub_info: StreamScrubInfo | None = None,
+    ) -> None:
         self._fingerprint = fingerprint
         self._pair = pair
+        self._scrub = scrub
+        self._scrub_info = scrub_info or StreamScrubInfo(
+            adapter_id=pair.adapter, type=pair.req_stream.type
+        )
         self._lock = threading.Lock()
         self._send_idx = 0
         self._recv_idx = 0
@@ -223,6 +247,11 @@ class StreamReplay:
           stream-done signal) WITHOUT poisoning the recv side; with an
           error terminal raises the recorded error. Bytes at i >= S are
           never compared.
+
+        The live bytes are scrubbed by the session's frame scrub hook
+        before the comparison — recorded frames were scrubbed at record
+        time, so symmetric scrubbing is what makes a scrubbed cassette
+        match its live traffic.
         """
         with self._lock:
             if self._mismatch is not None:
@@ -231,6 +260,7 @@ class StreamReplay:
             frames = self._pair.req_stream.frames
             if i >= len(frames):
                 raise self._terminal()
+            message = scrub_frame(self._scrub, SEND, self._scrub_info, message)
             recorded = frames[i].message
             if message != recorded:
                 want = hashlib.sha256(recorded).hexdigest()
