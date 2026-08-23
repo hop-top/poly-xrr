@@ -258,6 +258,72 @@ Streamed interactions ride the same envelope plus a `stream` frame-log
 extension — still one req/resp pair per interaction. See
 [spec/cassette-format-streaming.md](spec/cassette-format-streaming.md).
 
+## Secret Redaction
+
+Cassettes get committed to git, so credentials must never reach them.
+Redaction runs at **record time**, before any byte is written — a secret
+is never persisted and then cleaned up. **On by default; no configuration
+required.**
+
+Redacted automatically:
+
+- **Credential-bearing field names** — `*_TOKEN`, `*_SECRET`, `*_KEY`,
+  `*_PASSWORD`, `*_CREDENTIALS`, `AWS_*`, plus HTTP `Authorization`,
+  `Proxy-Authorization`, `Cookie`, `Set-Cookie`, `X-Api-Key` and friends.
+  Matching is case-insensitive and treats `-` and `_` alike, so
+  `X-Api-Key` and `X_API_KEY` classify identically.
+- **Credential-shaped values**, whatever the field is called — GitHub
+  (`ghp_…`, `github_pat_…`), AWS (`AKIA…`), OpenAI/Anthropic (`sk-…`),
+  Slack (`xox…`), Google (`AIza…`), Stripe, JWTs, PEM private-key blocks,
+  and `Bearer`/`Basic` header values. This catches secrets in variables
+  the name-based list would miss.
+
+Redacted values serialize to a deterministic placeholder derived only
+from the field name:
+
+```yaml
+payload:
+  argv: [gh, pr, view, "1"]
+  env:
+    GITHUB_TOKEN: <redacted:GITHUB_TOKEN>
+    PATH: /usr/local/bin:/usr/bin      # benign values survive
+```
+
+Because the placeholder depends on nothing but the field name,
+re-recording produces byte-identical cassettes — no diff churn.
+
+**Fingerprints are unaffected.** No adapter hashes `env` or `headers`
+(exec hashes `{argv, stdin, cwd?}`; http hashes `{method, path,
+body_hash}`), so redaction cannot shift a cassette's fingerprint or
+filename, and cross-runtime replay is preserved.
+
+### Configuration
+
+| Env var              | Effect                                                     |
+|----------------------|------------------------------------------------------------|
+| `XRR_REDACT_ALLOW`   | Comma-separated field names to keep verbatim (escape hatch) |
+| `XRR_REDACT_DENY`    | Comma-separated extra field names to always redact          |
+| `XRR_REDACT_DISABLE` | Set to `1` to turn redaction off entirely                   |
+
+`XRR_REDACT_ALLOW` wins over everything, including value-pattern
+matching — use it for deliberately fake fixture credentials. Disabling
+redaction is only appropriate when recording against fake credentials.
+
+In Go, pass an explicit policy instead of using env vars:
+
+```go
+r := xrr.NewRedactor(xrr.RedactConfig{Allow: []string{"FIXTURE_TOKEN"}})
+c := xrr.NewFileCassetteWithRedactor(dir, r)
+```
+
+The other ports expose the same escape hatch as an optional cassette
+constructor argument (`FileCassette::with_redactor` in Rust).
+
+> **Note:** redaction ships in every port (go / ts / py / php / rs)
+> with identical rules and placeholders, so re-recorded cassettes stay
+> byte-comparable across runtimes — see the spec's Secret Redaction
+> section for the shared contract.
+
 ## Languages
 
 | Dir  | Package       | Test command          |

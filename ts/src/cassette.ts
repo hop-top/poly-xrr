@@ -9,6 +9,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import yaml from "js-yaml";
+import { Redactor, redactConfigFromEnv } from "./redact.js";
 import { ErrCassetteMiss, type Cassette } from "./xrr.js";
 import {
   ShapeMismatchError,
@@ -32,7 +33,22 @@ interface Envelope {
 }
 
 export class FileCassette implements Cassette {
-  constructor(private readonly dir: string) {}
+  /**
+   * Redaction is enabled by default, configured from the XRR_REDACT_*
+   * environment variables. Pass an explicit Redactor to supply a policy
+   * that bypasses the environment.
+   */
+  constructor(
+    private readonly dir: string,
+    private readonly redactor?: Redactor
+  ) {}
+
+  // Resolves the redactor to use for one write. When none was injected,
+  // config is read from the environment on each write so a test that
+  // flips XRR_REDACT_* mid-process sees the change.
+  private activeRedactor(): Redactor {
+    return this.redactor ?? new Redactor(redactConfigFromEnv());
+  }
 
   async save(
     adapterID: string,
@@ -67,12 +83,16 @@ export class FileCassette implements Cassette {
     recordedAt: string,
     payload: unknown
   ): Promise<void> {
+    // Scrub credential-bearing fields before serialization — a secret
+    // never reaches the YAML string, let alone the file. Envelope
+    // metadata is built after redaction and is never scrubbed: the
+    // fingerprint in particular must match the filename.
     const env: Envelope = {
       xrr: "1",
       adapter: adapterID,
       fingerprint,
       recorded_at: recordedAt,
-      payload,
+      payload: this.activeRedactor().redactPayload(payload),
     };
     const data = yaml.dump(env, { lineWidth: -1 });
     await fs.writeFile(this.filePath(adapterID, fingerprint, kind), data, "utf8");

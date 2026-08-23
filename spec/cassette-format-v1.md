@@ -280,6 +280,105 @@ loaders are unaffected. Full schema, fingerprint algorithms, replay
 semantics, and conformance obligations:
 [cassette-format-streaming.md](cassette-format-streaming.md).
 
+## Secret Redaction (v1 clarification)
+
+Cassettes are committed to version control, so recorders MUST NOT
+persist credentials. Redaction is a **record-side** concern: it happens
+before serialization, so a secret never reaches disk.
+
+### Format impact: none
+
+Redaction introduces **no new envelope field and no version bump**. A
+redacted value is an ordinary string in an existing field, so a v1
+reader parses a redacted cassette exactly like any other. Ports may
+adopt redaction independently without breaking replay compatibility.
+
+### Placeholder form
+
+```
+<redacted:FIELD_NAME>
+```
+
+`FIELD_NAME` is the field's own key, uppercased, with its original
+separators preserved (`Authorization` → `<redacted:AUTHORIZATION>`,
+`X-Api-Key` → `<redacted:X-API-KEY>`).
+
+The placeholder MUST derive **only** from the field name — never from
+the secret's value, a hash of it, a counter, or a timestamp. This makes
+re-recording byte-stable, so committed cassettes do not churn.
+
+### Scope: structured payload fields only
+
+Field-name redaction walks the structured payload tree, so it covers
+unary envelopes and any structured field of a streamed envelope. It
+does NOT reach inside stream frame payloads (`message_b64` /
+`message_text`): those are opaque decoded bytes whose base64 encoding
+defeats field-name and value-pattern matching alike. Streamed frames
+are covered by the separate, symmetric frame scrub hook described in
+[cassette-format-streaming.md](cassette-format-streaming.md) — see its
+REDACTION WARNING. The two mechanisms are complementary: neither
+subsumes the other, and a recorder that streams secrets needs both.
+
+### Fingerprint interaction — REQUIRED reading for ports
+
+Redaction MUST NOT change any fingerprint. This holds today because no
+v1 fingerprint input includes a credential-bearing field:
+
+| Adapter | Fingerprint inputs        | Redactable fields (not hashed) |
+|---------|---------------------------|--------------------------------|
+| exec    | `argv`, `stdin`, `cwd?`   | `env`                          |
+| http    | `method`, path+query, `body_hash` | `headers`              |
+| grpc    | `service`, `method`, `msg_hash`   | —                      |
+| redis   | `command`, `args`         | —                              |
+| sql     | normalized `query`, `args`| —                              |
+
+Ports MUST redact only fields outside their fingerprint inputs.
+Redacting a **hashed** field (e.g. rewriting an exec `argv` element or
+an http body) would shift the fingerprint and break cross-runtime
+replay, because a port that redacts differently would compute a
+different cassette key. Fields inside the fingerprint MUST be left
+verbatim; adopters who pass credentials as command-line arguments
+should scrub them before handing the request to xrr.
+
+### Minimum default policy
+
+A conforming recorder SHOULD redact, with zero configuration:
+
+- Field names matching the credential words `TOKEN`, `SECRET`,
+  `PASSWORD`, `PASSPHRASE`, `CREDENTIAL(S)`, `KEY`, `APIKEY`, `AUTH`,
+  `COOKIE`, `SESSION`, `SIGNATURE`, `PRIVATE`, `BEARER` as
+  underscore-delimited words, plus the `AWS_` namespace. Matching is
+  case-insensitive and treats `-` and `_` as equivalent so HTTP header
+  and env-var spellings classify identically.
+- HTTP headers `Authorization`, `Proxy-Authorization`, `Cookie`,
+  `Set-Cookie`, `X-Api-Key`, `X-Auth-Token`, `X-Amz-Security-Token`.
+- Values matching high-confidence vendor credential shapes (GitHub
+  `ghp_`/`github_pat_`, AWS `AKIA`, `sk-`, Slack `xox*-`, Google
+  `AIza`, Stripe, JWT, PEM private-key headers, `Bearer`/`Basic`).
+
+Value-pattern matching SHOULD stay narrow. A false positive silently
+corrupts a cassette, so generic "looks random" heuristics MUST NOT be
+used — they would redact commit SHAs, UUIDs, and base64 payloads.
+
+Empty values MUST be left alone: there is nothing to leak, and a
+placeholder would falsely imply a secret was present.
+
+### Escape hatch
+
+Recorders MUST offer a way to preserve a named field verbatim and to
+add custom field names, and MAY offer a global off switch. The Go port
+exposes these as `XRR_REDACT_ALLOW`, `XRR_REDACT_DENY`, and
+`XRR_REDACT_DISABLE`.
+
+### Adoption status
+
+Implemented in all ports (go / ts / py / php / rs) with the same rule
+set and placeholder format, so re-recorded cassettes stay
+byte-comparable across runtimes. Because redaction is record-side
+only, mixing adopting and non-adopting versions does not break replay
+in either direction — an unredacted cassette replays in a redacting
+port and vice versa.
+
 ## Cross-Language Conformance
 
 All language ports MUST be able to replay cassettes written by any other port.

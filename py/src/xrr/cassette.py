@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from .redact import Redactor, redact_config_from_env
 from .stream import (
     QuotedStr,
     ShapeMismatch,
@@ -22,10 +23,22 @@ class CassetteMiss(Exception):
 
 
 class FileCassette:
-    """Stores interactions as YAML files in a directory."""
+    """Stores interactions as YAML files in a directory.
 
-    def __init__(self, directory: str) -> None:
+    Redaction is enabled by default, configured from the XRR_REDACT_*
+    environment variables. Pass an explicit redactor to supply a policy
+    that bypasses the environment.
+    """
+
+    def __init__(self, directory: str, redactor: Redactor | None = None) -> None:
         self._dir = directory
+        self._redactor = redactor
+
+    def _active_redactor(self) -> Redactor:
+        # When none was injected, config is read from the environment on
+        # each write so a test that flips XRR_REDACT_* mid-process sees
+        # the change.
+        return self._redactor or Redactor(redact_config_from_env())
 
     def save(
         self,
@@ -46,6 +59,10 @@ class FileCassette:
         recorded_at: str,
         payload: dict[str, Any],
     ) -> None:
+        # Scrub credential-bearing fields before serialization — a
+        # secret never reaches the YAML string, let alone the file.
+        # Envelope metadata is never scrubbed: the fingerprint in
+        # particular must match the filename.
         envelope = {
             "xrr": "1",
             "adapter": adapter_id,
@@ -53,7 +70,7 @@ class FileCassette:
             # as an integer and no longer matches its filename.
             "fingerprint": QuotedStr(fingerprint),
             "recorded_at": recorded_at,
-            "payload": payload,
+            "payload": self._active_redactor().redact_payload(payload),
         }
         with open(self._path(adapter_id, fingerprint, kind), "w", encoding="utf-8") as fh:
             fh.write(dump_envelope(envelope))
