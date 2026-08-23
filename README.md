@@ -125,7 +125,7 @@ $client = new MyServiceClient($target, [
 ]);
 // ... run your streaming RPCs; every message is teed into cassettes
 
-// Replay everywhere — no server, no network, no ext-grpc needed
+// Replay everywhere — no server, no network (ext-grpc still loaded)
 $s2 = new Session(Mode::Replay, new FileCassette('./cassettes'));
 $client2 = new MyServiceClient($target, [
     'credentials'       => ChannelCredentials::createInsecure(),
@@ -154,9 +154,14 @@ semantics: [spec/cassette-format-streaming.md](spec/cassette-format-streaming.md
   any port can tape and serve streamed interactions programmatically and
   replay cassettes recorded by any other. Go and PHP additionally ship a
   gRPC adapter on top of it.
-- **PHP runtime caveats.** Recording needs `ext-grpc`; replay does not
-  (replaying calls open no channel, so a replay suite runs with the
-  extension absent). `ext-grpc`'s batch API is unconditionally blocking
+- **PHP runtime caveats.** Replay opens no channel, no socket and no
+  `Grpc\Call` — the recorded conversation is served entirely from the
+  cassette. `ext-grpc` must still be *loaded* to construct a generated
+  stub, because `Grpc\BaseStub::__construct` touches
+  `Grpc\ChannelCredentials` before it ever reaches the call-invoker
+  branch; the adapter's own replay classes have no such dependency and are
+  unit-testable with the extension absent. `ext-grpc`'s batch API is
+  unconditionally blocking
   with no non-blocking poll, so a single PHP process drives a bidi RPC
   half-duplex — it cannot write while blocked in a read. Bound long
   streams with the gRPC call deadline, not `max_execution_time`, and drive

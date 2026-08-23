@@ -24,9 +24,11 @@ use PHPUnit\Framework\TestCase;
 /**
  * The gRPC streaming adapter, exercised against the spec fixtures.
  *
- * Replay opens no channel and no call, so these run with ext-grpc absent —
- * which is exactly the property that makes a replay suite portable. The
- * record direction needs a live server and a working extension and is
+ * The replaying call classes open no channel and no `Grpc\Call`, so these
+ * run with ext-grpc absent — the extension is only needed to construct a
+ * generated stub (BaseStub's constructor touches Grpc\ChannelCredentials
+ * before reaching the call-invoker branch), never by the adapter itself.
+ * The record direction needs a live server and a loaded extension and is
  * covered separately.
  */
 class GrpcStreamAdapterTest extends TestCase
