@@ -62,8 +62,8 @@ class FsAdapter implements AdapterInterface
         ];
 
         $data = $req['data'] ?? '';
-        if ($data !== '' && $data !== null) {
-            $fields['data_sha256'] = hash('sha256', (string) $data);
+        if (is_string($data) && $data !== '') {
+            $fields['data_sha256'] = hash('sha256', $data);
         }
         if (isset($req['mode'])) {
             $fields['mode'] = $req['mode'];

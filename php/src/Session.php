@@ -5,13 +5,26 @@ declare(strict_types=1);
 namespace HopTop\Xrr;
 
 use HopTop\Xrr\Exception\CassetteMissException;
+use HopTop\Xrr\Stream\OccurrenceCounter;
 
 class Session
 {
+    private ?OccurrenceCounter $streamOccurrences = null;
+
     public function __construct(
         private Mode $mode,
         private FileCassette $cassette
     ) {}
+
+    /**
+     * Occurrence counter for streamed opens whose fingerprint carries `n`.
+     * One session object is one counter domain; record and replay count
+     * identically (cassette-format-streaming.md, Fingerprinting).
+     */
+    public function streamOccurrences(): OccurrenceCounter
+    {
+        return $this->streamOccurrences ??= new OccurrenceCounter();
+    }
 
     /**
      * Execute one interaction according to session mode.
