@@ -1,4 +1,6 @@
-use crate::{cassette::FileCassette, error::XrrError, Adapter};
+use crate::{
+    cassette::FileCassette, error::XrrError, stream::StreamCounters, Adapter,
+};
 
 pub enum Mode {
     Record,
@@ -9,11 +11,22 @@ pub enum Mode {
 pub struct Session {
     mode: Mode,
     cassette: FileCassette,
+    stream_counters: StreamCounters,
 }
 
 impl Session {
     pub fn new(mode: Mode, cassette: FileCassette) -> Self {
-        Self { mode, cassette }
+        Self {
+            mode,
+            cassette,
+            stream_counters: StreamCounters::new(),
+        }
+    }
+
+    /// Occurrence counters for streamed fingerprints: one session object
+    /// is one counter domain, counted identically in record and replay.
+    pub fn stream_counters(&self) -> &StreamCounters {
+        &self.stream_counters
     }
 
     pub fn record<A: Adapter>(

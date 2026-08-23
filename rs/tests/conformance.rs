@@ -4,6 +4,7 @@ use serde::Deserialize;
 use hop_top_xrr::{
     adapters::exec::{ExecRequest, ExecResponse},
     adapters::fs::{FsRequest, FsResponse},
+    stream::StreamedPair,
     FileCassette,
 };
 
@@ -16,6 +17,10 @@ struct Manifest {
 struct Interaction {
     adapter: String,
     fingerprint: String,
+    /// Streamed entries route through the streaming load path
+    /// (manifest extension; defaults to false when absent).
+    #[serde(default)]
+    streamed: bool,
 }
 
 /// Walk spec/fixtures/ dirs, load each manifest and verify all cassette
@@ -54,6 +59,22 @@ fn test_conformance_fixtures() {
         let cassette = FileCassette::new(&fixture_dir);
 
         for interaction in &manifest.interactions {
+            if interaction.streamed {
+                let result = StreamedPair::load(
+                    &fixture_dir,
+                    &interaction.adapter,
+                    &interaction.fingerprint,
+                );
+                assert!(
+                    result.is_ok(),
+                    "failed to load streamed {}/{}: {:?}",
+                    fixture_dir.display(),
+                    interaction.fingerprint,
+                    result.err()
+                );
+                total += 1;
+                continue;
+            }
             match interaction.adapter.as_str() {
                 "exec" => {
                     let result: Result<(ExecRequest, ExecResponse), _> =
