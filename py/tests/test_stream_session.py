@@ -516,8 +516,37 @@ def test_open_stream_mode_enforcement(tmp_path):
 
 
 def _streamed_entries(d: Path) -> list[dict]:
+    """Streamed entries in a spec-conforming open order.
+
+    `interactions` is an unordered set (cassette-format-streaming.md,
+    Manifest Extension), so file order carries no scheduling meaning.
+    Entries sharing a counter domain — the `(service, method, stream type)`
+    tuple of a `client`/`bidi` open — must be opened ascending by the req
+    payload's `n`; everything else is order-independent. Sorting the whole
+    list by `n` within its domain satisfies that: `n` is unique inside a
+    domain, and comparisons across domains are inconsequential.
+    """
     manifest = yaml.safe_load((d / "manifest.yaml").read_text())
-    return [i for i in (manifest.get("interactions") or []) if i.get("streamed")]
+    entries = [i for i in (manifest.get("interactions") or []) if i.get("streamed")]
+
+    def domain_order(entry: dict) -> tuple:
+        req = yaml.safe_load(
+            (d / f"{entry['adapter']}-{entry['fingerprint']}.req.yaml").read_text()
+        )
+        stype = req["stream"]["type"]
+        payload = req["payload"]
+        # Server streams use no counter and join no domain; key them apart so
+        # they never interleave into a domain's ascending-n run.
+        if stype == "server":
+            return ("", "", "", 0)
+        return (
+            payload.get("service", ""),
+            payload.get("method", ""),
+            stype,
+            payload["n"],
+        )
+
+    return sorted(entries, key=domain_order)
 
 
 _STREAMED_DIRS = sorted(
@@ -551,8 +580,13 @@ def _open_for_pair(pair: StreamedPair) -> StreamOpen:
 def test_replay_streamed_fixture_dir(dirname: str):
     """Replay every streamed fixture through the session API: fingerprint
     located at open, sends validated, recv frames in order, then the
-    recorded terminal. Manifest order is open order (one counter domain
-    per session; see grpc-client-stream-repeat/README.md)."""
+    recorded terminal.
+
+    One session — hence one counter domain per `(service, method, type)`
+    tuple — per fixture dir. Manifest order is NOT open order: `interactions`
+    is an unordered set, so `_streamed_entries` establishes the open order
+    itself, ascending by req payload `n` within a counter domain, per
+    cassette-format-streaming.md (Manifest Extension)."""
     d = _FIXTURES / dirname
     cassette = FileCassette(str(d))
     session = Session(REPLAY, cassette)

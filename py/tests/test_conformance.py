@@ -25,15 +25,47 @@ def _fixture_dirs() -> list[Path]:
     return [p for p in _FIXTURES_DIR.iterdir() if p.is_dir()]
 
 
+def _in_open_order(fixture_dir: Path, interactions: list[dict]) -> list[dict]:
+    """Order manifest entries for replay, per the spec's ordering rule.
+
+    `interactions` is an unordered set (cassette-format-streaming.md,
+    Manifest Extension): file order is not open order. Entries sharing a
+    counter domain — the `(service, method, stream type)` tuple of a
+    `client`/`bidi` open — must be opened ascending by the req payload's
+    `n`. Everything else (server streams, distinct domains, non-streamed
+    entries) is order-independent and keyed apart so it never interleaves
+    into a domain's ascending-n run.
+    """
+
+    def key(item: dict) -> tuple:
+        if not item.get("streamed", False):
+            return ("", "", "", 0)
+        req_path = fixture_dir / f"{item['adapter']}-{item['fingerprint']}.req.yaml"
+        req = yaml.safe_load(req_path.read_text())
+        stype = req["stream"]["type"]
+        if stype == "server":
+            return ("", "", "", 0)
+        payload = req["payload"]
+        return (
+            payload.get("service", ""),
+            payload.get("method", ""),
+            stype,
+            payload["n"],
+        )
+
+    return sorted(interactions, key=key)
+
+
 def _recompute_grpc_fingerprint(
     pair: StreamedPair, counters: dict[tuple[str, str, str], int]
 ) -> str | None:
     """Recompute a grpc streamed fingerprint per the spec's algorithms.
 
     Non-grpc adapters (sse) have no specified algorithm — their
-    fingerprint is opaque, return None. Counter-fingerprinted tuples
-    share one counter domain per fixture dir; manifest order is open
-    order.
+    fingerprint is opaque, return None. Counter-fingerprinted tuples share
+    one counter domain per fixture dir, so the caller must drive them in a
+    spec-conforming order (ascending `n` within a domain) rather than in
+    manifest order, which carries no scheduling meaning.
     """
     if pair.adapter != "grpc":
         return None
@@ -92,7 +124,7 @@ def test_conformance_fixture(fixture_dir: Path, tmp_path):
 
     cassette = FileCassette(str(fixture_dir))
     counters: dict[tuple[str, str, str], int] = {}
-    for item in interactions:
+    for item in _in_open_order(fixture_dir, interactions):
         adapter = item["adapter"]
         fingerprint = item["fingerprint"]
         if not item.get("streamed", False):
