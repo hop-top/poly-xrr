@@ -3,6 +3,8 @@ package grpc
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -64,6 +66,27 @@ func streamTypeOf(desc *grpc.StreamDesc) (xrr.StreamType, error) {
 	default:
 		return "", fmt.Errorf("grpc: %q is unary-shaped (no stream direction); unary RPCs use the unary adapter path", desc.StreamName)
 	}
+}
+
+// streamOpen builds the core open value for a gRPC streamed RPC per the
+// spec's gRPC mapping: canonical inputs service + method, req payload
+// {service, method}. Server streams are content-addressed via
+// msg_hash = sha256(message_bytes)[:8] (the wire bytes of the single
+// request message); client/bidi opens are counter-addressed.
+func streamOpen(typ xrr.StreamType, service, method string, msg []byte) xrr.StreamOpen {
+	open := xrr.StreamOpen{
+		AdapterID: adapterID,
+		Type:      typ,
+		Identity:  map[string]any{"service": service, "method": method},
+		Payload:   map[string]any{"service": service, "method": method},
+	}
+	if typ == xrr.StreamServer {
+		sum := sha256.Sum256(msg)
+		open.Identity["msg_hash"] = hex.EncodeToString(sum[:4])
+	} else {
+		open.Counter = true
+	}
+	return open
 }
 
 // splitFullMethod splits "/pkg.Service/Method" into its service and method
@@ -134,7 +157,9 @@ func unmarshalMessage(data []byte, m any) error {
 type recordStream struct {
 	grpc.ClientStream
 	session       *xrr.FileSession
-	open          xrr.StreamOpen
+	typ           xrr.StreamType
+	service       string
+	method        string
 	serverStreams bool
 
 	mu       sync.Mutex
@@ -155,7 +180,9 @@ func newRecordStream(ctx context.Context, session *xrr.FileSession, desc *grpc.S
 	}
 	rs := &recordStream{
 		session:       session,
-		open:          xrr.StreamOpen{AdapterID: adapterID, Type: typ, Service: service, Method: mth},
+		typ:           typ,
+		service:       service,
+		method:        mth,
 		serverStreams: desc.ServerStreams,
 	}
 	// Client/bidi opens are fingerprinted by the occurrence counter, so the
@@ -163,7 +190,7 @@ func newRecordStream(ctx context.Context, session *xrr.FileSession, desc *grpc.S
 	// streams are content-addressed by the open message, which grpc-go only
 	// surfaces at the first SendMsg — their open is deferred there.
 	if typ != xrr.StreamServer {
-		rec, err := session.OpenStreamRecord(rs.open)
+		rec, err := session.OpenStreamRecord(streamOpen(typ, service, mth, nil))
 		if err != nil {
 			return nil, err
 		}
@@ -186,9 +213,7 @@ func (s *recordStream) ensureOpen(openMsg []byte) (*xrr.StreamRecording, error) 
 	if s.rec != nil {
 		return s.rec, nil
 	}
-	open := s.open
-	open.Message = openMsg
-	rec, err := s.session.OpenStreamRecord(open)
+	rec, err := s.session.OpenStreamRecord(streamOpen(s.typ, s.service, s.method, openMsg))
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +319,9 @@ func (s *recordStream) CloseSend() error {
 type replayStream struct {
 	ctx     context.Context
 	session *xrr.FileSession
-	open    xrr.StreamOpen
+	typ     xrr.StreamType
+	service string
+	method  string
 
 	mu      sync.Mutex
 	rp      *xrr.StreamReplay
@@ -315,14 +342,16 @@ func newReplayStream(ctx context.Context, session *xrr.FileSession,
 	rs := &replayStream{
 		ctx:     ctx,
 		session: session,
-		open:    xrr.StreamOpen{AdapterID: adapterID, Type: typ, Service: service, Method: mth},
+		typ:     typ,
+		service: service,
+		method:  mth,
 	}
 	// Client/bidi cassettes are located by the occurrence counter, known
 	// now: misses and shape mismatches surface from the interceptor call
 	// itself. Server streams are located by the request message, so their
 	// open is deferred to the first SendMsg.
 	if typ != xrr.StreamServer {
-		rp, err := session.OpenStreamReplay(rs.open)
+		rp, err := session.OpenStreamReplay(streamOpen(typ, service, mth, nil))
 		if err != nil {
 			return nil, err
 		}
@@ -342,9 +371,7 @@ func (s *replayStream) ensureOpen(openMsg []byte) (*xrr.StreamReplay, error) {
 	if s.rp != nil {
 		return s.rp, nil
 	}
-	open := s.open
-	open.Message = openMsg
-	rp, err := s.session.OpenStreamReplay(open)
+	rp, err := s.session.OpenStreamReplay(streamOpen(s.typ, s.service, s.method, openMsg))
 	if err != nil {
 		s.openErr = err
 		return nil, err

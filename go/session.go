@@ -13,9 +13,10 @@ type FileSession struct {
 	cassette *FileCassette
 
 	// Streamed-open occurrence counters: one session object is one
-	// counter domain. See stream_session.go.
+	// counter domain, keyed by adapter id + canonical identity. See
+	// stream_session.go.
 	streamMu sync.Mutex
-	streamN  map[streamKey]int
+	streamN  map[string]int
 }
 
 // NewSession creates a FileSession with the given mode and cassette.

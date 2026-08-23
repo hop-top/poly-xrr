@@ -34,23 +34,23 @@ func TestStreamFingerprintSpecVectors(t *testing.T) {
 	}{
 		{
 			name: "server hosts",
-			open: xrr.StreamOpen{Type: xrr.StreamServer, Service: "files.FileService", Method: "Download", Message: hosts},
+			open: grpcStreamOpen(xrr.StreamServer, "files.FileService", "Download", hosts),
 			want: "58a4bf3f",
 		},
 		{
 			name: "server biglog",
-			open: xrr.StreamOpen{Type: xrr.StreamServer, Service: "files.FileService", Method: "Download", Message: biglog},
+			open: grpcStreamOpen(xrr.StreamServer, "files.FileService", "Download", biglog),
 			want: "9e8c4d4c",
 		},
 		{
 			name: "client upload n0",
-			open: xrr.StreamOpen{Type: xrr.StreamClient, Service: "files.FileService", Method: "Upload"},
+			open: grpcStreamOpen(xrr.StreamClient, "files.FileService", "Upload", nil),
 			n:    0,
 			want: "2bebfd6f",
 		},
 		{
 			name: "bidi converse n0",
-			open: xrr.StreamOpen{Type: xrr.StreamBidi, Service: "chat.ChatService", Method: "Converse"},
+			open: grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Converse", nil),
 			n:    0,
 			want: "c6233d2e",
 		},
@@ -65,10 +65,47 @@ func TestStreamFingerprintSpecVectors(t *testing.T) {
 }
 
 func TestStreamFingerprintInvalidInputs(t *testing.T) {
-	_, err := xrr.StreamFingerprint(xrr.StreamOpen{Type: "duplex", Service: "s", Method: "m"}, 0)
-	assert.Error(t, err)
-	_, err = xrr.StreamFingerprint(xrr.StreamOpen{Type: xrr.StreamClient, Service: "s", Method: "m"}, -1)
-	assert.Error(t, err)
+	_, err := xrr.StreamFingerprint(xrr.StreamOpen{Type: "duplex", Identity: map[string]any{"service": "s"}}, 0)
+	assert.Error(t, err, "unknown stream type")
+	_, err = xrr.StreamFingerprint(grpcStreamOpen(xrr.StreamClient, "s", "m", nil), -1)
+	assert.Error(t, err, "counter-addressed open without an ordinal")
+	for _, reserved := range []string{"stream", "n"} {
+		_, err = xrr.StreamFingerprint(xrr.StreamOpen{
+			Type: xrr.StreamServer, Identity: map[string]any{reserved: "x"},
+		}, 0)
+		assert.Error(t, err, "identity key %q is reserved for core injection", reserved)
+	}
+}
+
+// TestStreamFingerprintSSEIdentity — the acceptance proof that the seam is
+// adapter-neutral: an sse-shaped, url-keyed identity reproduces the
+// sse-text-scalars fixture fingerprint
+// sha256(canonical({"stream":"server","url":"https://example.test/events"}))[:8]
+// with no core changes, both from the pure function and through a session
+// open with an sse-shaped payload.
+func TestStreamFingerprintSSEIdentity(t *testing.T) {
+	open := xrr.StreamOpen{
+		AdapterID: "sse",
+		Type:      xrr.StreamServer,
+		Identity:  map[string]any{"url": "https://example.test/events"},
+		Payload:   map[string]any{"url": "https://example.test/events"},
+	}
+	fp, err := xrr.StreamFingerprint(open, -1)
+	require.NoError(t, err)
+	assert.Equal(t, "66ecc77a", fp)
+
+	dir := t.TempDir()
+	s := xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette(dir))
+	rec, err := s.OpenStreamRecord(open)
+	require.NoError(t, err)
+	assert.Equal(t, "66ecc77a", rec.Fingerprint())
+	rec.RecordRecv([]byte("on"))
+	require.NoError(t, rec.Finish(map[string]any{}, nil))
+
+	pair, err := xrr.NewFileCassette(dir).LoadStream("sse", "66ecc77a")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]any{"url": "https://example.test/events"}, pair.ReqPayload)
+	assert.NotContains(t, pair.ReqPayload, "n", "content-addressed opens carry no ordinal")
 }
 
 // writeStreamedPair writes raw req/resp YAML docs as a grpc-<fp> pair in a

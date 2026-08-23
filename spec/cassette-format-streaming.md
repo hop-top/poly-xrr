@@ -313,7 +313,11 @@ Multi-process adopters MUST keep counter-fingerprinted tuples disjoint per
 process. A future adapter-level discriminator (in the spirit of exec's
 `cwd` extension) is the escape hatch if that constraint proves unworkable.
 
-Adapter-specific inputs are defined in each adapter's mapping section.
+Adapter-specific inputs are defined in each adapter's mapping section. The
+split is structural: the core owns canonical-JSON assembly, the `stream`
+discriminator, hashing/truncation, and the occurrence-counter lifecycle;
+an adapter supplies only its canonical input fields, its payload shapes,
+and the identity that keys its counter.
 
 ## Matching and Replay Semantics
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"sync"
 	"time"
 )
@@ -15,37 +16,33 @@ import (
 // stream wrappers on top of these handles; see
 // spec/cassette-format-streaming.md for the normative semantics.
 
-// streamKey identifies one occurrence-counter domain entry. One Session
+// nextStreamN returns the 0-based count of prior streamed opens with the
+// same identifying key in this session, then increments it. One Session
 // object is one counter domain: the counter is created with the session and
 // consumed identically in record and replay modes.
-type streamKey struct {
-	adapter string
-	service string
-	method  string
-	typ     StreamType
-}
-
-// nextStreamN returns the 0-based count of prior streamed opens with the
-// same identifying tuple in this session, then increments it.
-func (s *FileSession) nextStreamN(open StreamOpen) int {
+func (s *FileSession) nextStreamN(key string) int {
 	s.streamMu.Lock()
 	defer s.streamMu.Unlock()
 	if s.streamN == nil {
-		s.streamN = make(map[streamKey]int)
+		s.streamN = make(map[string]int)
 	}
-	k := streamKey{adapter: open.AdapterID, service: open.Service, method: open.Method, typ: open.Type}
-	n := s.streamN[k]
-	s.streamN[k] = n + 1
+	n := s.streamN[key]
+	s.streamN[key] = n + 1
 	return n
 }
 
 // streamOpenFingerprint computes the open-time fingerprint, consuming the
-// occurrence counter for client/bidi opens. n is -1 for server streams
-// (which are content-addressed via the open message instead).
+// occurrence counter for counter-addressed opens. The counter is keyed by
+// the adapter id plus the canonical identity (sans "n"), i.e. the adapter's
+// identifying tuple. n is -1 for content-addressed opens.
 func (s *FileSession) streamOpenFingerprint(open StreamOpen) (fp string, n int, err error) {
 	n = -1
-	if open.Type == StreamClient || open.Type == StreamBidi {
-		n = s.nextStreamN(open)
+	if open.Counter {
+		base, cErr := streamCanonical(open, -1)
+		if cErr != nil {
+			return "", -1, cErr
+		}
+		n = s.nextStreamN(open.AdapterID + "\x00" + string(base))
 	}
 	fp, err = StreamFingerprint(open, n)
 	return fp, n, err
@@ -80,7 +77,8 @@ func (s *FileSession) OpenStreamRecord(open StreamOpen) (*StreamRecording, error
 	if err != nil {
 		return nil, err
 	}
-	payload := map[string]any{"service": open.Service, "method": open.Method}
+	payload := make(map[string]any, len(open.Payload)+1)
+	maps.Copy(payload, open.Payload)
 	if n >= 0 {
 		// Informational occurrence ordinal: recoverable from disk, never
 		// read back to drive matching.

@@ -151,47 +151,75 @@ func ValidateStreamPair(p *StreamPair) error {
 }
 
 // StreamOpen identifies a streamed interaction at open time — everything a
-// replay needs to locate the cassette before any frames exist. Message is
-// the single request message for server streams (available at open,
-// mirroring unary); client/bidi opens carry no message and are
-// disambiguated by the session's occurrence counter instead.
+// replay needs to locate the cassette before any frames exist. The adapter
+// supplies its own canonical fingerprint inputs (Identity), its req payload
+// shape (Payload), and whether the open is disambiguated by the session's
+// occurrence counter (Counter); the core owns canonical-JSON assembly, the
+// "stream" discriminator, hashing/truncation, and the counter lifecycle.
 type StreamOpen struct {
 	AdapterID string
 	Type      StreamType
-	Service   string
-	Method    string
-	Message   []byte // server streams only
+	// Identity holds the adapter's canonical fingerprint inputs (for gRPC:
+	// service, method, and msg_hash for server streams; for an SSE-style
+	// adapter: url). Keys "stream" and "n" are reserved for core injection.
+	// Values must marshal deterministically as JSON (strings and integers
+	// in practice).
+	Identity map[string]any
+	// Counter marks the open as counter-addressed: the identity does not
+	// fully identify the interaction, so the session's occurrence counter —
+	// keyed by (AdapterID, Type, Identity) — supplies the 0-based ordinal n,
+	// injected as canonical input "n" and informational payload field "n".
+	Counter bool
+	// Payload is the adapter-defined open-request payload persisted to the
+	// req file. The core injects "n" for counter-addressed opens.
+	Payload map[string]any
+}
+
+// streamCanonical assembles the spec's canonical JSON for an open: the
+// adapter identity plus the injected "stream" discriminator, plus "n" when
+// n >= 0. json.Marshal sorts map keys lexicographically and emits no
+// insignificant whitespace — exactly the spec's canonical JSON.
+func streamCanonical(open StreamOpen, n int) ([]byte, error) {
+	switch open.Type {
+	case StreamServer, StreamClient, StreamBidi:
+	default:
+		return nil, fmt.Errorf("xrr: stream type %q invalid (want server|client|bidi)", open.Type)
+	}
+	inputs := make(map[string]any, len(open.Identity)+2)
+	for k, v := range open.Identity {
+		if k == "stream" || k == "n" {
+			return nil, fmt.Errorf("xrr: stream identity key %q is reserved for core injection", k)
+		}
+		inputs[k] = v
+	}
+	inputs["stream"] = string(open.Type)
+	if n >= 0 {
+		inputs["n"] = n
+	}
+	canonical, err := json.Marshal(inputs)
+	if err != nil {
+		return nil, fmt.Errorf("xrr: stream fingerprint marshal: %w", err)
+	}
+	return canonical, nil
 }
 
 // StreamFingerprint computes the streaming fingerprint for an open:
-// sha256(canonical_json)[:8] over inputs that always include a "stream"
-// discriminator, keeping the streaming fingerprint space disjoint from the
-// unary one. Server streams are content-addressed via
-// msg_hash = sha256(message_bytes)[:8]; client/bidi include the 0-based
-// occurrence ordinal n (ignored for server streams).
+// sha256(canonical_json)[:8] over the adapter's canonical inputs plus a
+// "stream" discriminator, keeping the streaming fingerprint space disjoint
+// from the unary one. Counter-addressed opens include the 0-based occurrence
+// ordinal n as canonical input "n"; n is ignored otherwise (content-addressed
+// identities, e.g. gRPC server streams, carry their content hash in Identity).
 func StreamFingerprint(open StreamOpen, n int) (string, error) {
-	inputs := map[string]any{
-		"method":  open.Method,
-		"service": open.Service,
-		"stream":  string(open.Type),
-	}
-	switch open.Type {
-	case StreamServer:
-		sum := sha256.Sum256(open.Message)
-		inputs["msg_hash"] = hex.EncodeToString(sum[:4])
-	case StreamClient, StreamBidi:
+	if open.Counter {
 		if n < 0 {
 			return "", fmt.Errorf("xrr: stream occurrence n must be >= 0, got %d", n)
 		}
-		inputs["n"] = n
-	default:
-		return "", fmt.Errorf("xrr: stream type %q invalid (want server|client|bidi)", open.Type)
+	} else {
+		n = -1
 	}
-	// json.Marshal sorts map keys lexicographically and emits no
-	// insignificant whitespace — exactly the spec's canonical JSON.
-	canonical, err := json.Marshal(inputs)
+	canonical, err := streamCanonical(open, n)
 	if err != nil {
-		return "", fmt.Errorf("xrr: stream fingerprint marshal: %w", err)
+		return "", err
 	}
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:4]), nil

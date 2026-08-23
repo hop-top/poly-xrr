@@ -1,6 +1,8 @@
 package xrr_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
 	"path/filepath"
@@ -18,16 +20,32 @@ func fixtureSession(t *testing.T, dir string) *xrr.FileSession {
 	return xrr.NewSession(xrr.ModeReplay, xrr.NewFileCassette(path))
 }
 
+// grpcStreamOpen mirrors the gRPC adapter's open definition: canonical
+// inputs service + method (+ msg_hash for content-addressed server
+// streams), counter-addressed client/bidi, req payload {service, method}.
+func grpcStreamOpen(typ xrr.StreamType, service, method string, msg []byte) xrr.StreamOpen {
+	open := xrr.StreamOpen{
+		AdapterID: "grpc",
+		Type:      typ,
+		Identity:  map[string]any{"service": service, "method": method},
+		Payload:   map[string]any{"service": service, "method": method},
+	}
+	if typ == xrr.StreamServer {
+		sum := sha256.Sum256(msg)
+		open.Identity["msg_hash"] = hex.EncodeToString(sum[:4])
+	} else {
+		open.Counter = true
+	}
+	return open
+}
+
 // ── record path ────────────────────────────────────────────────────────────
 
 func TestOpenStreamRecordServer(t *testing.T) {
 	dir := t.TempDir()
 	s := xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette(dir))
 	msg := []byte(`{"path":"/etc/hosts"}`)
-	rec, err := s.OpenStreamRecord(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamServer,
-		Service: "files.FileService", Method: "Download", Message: msg,
-	})
+	rec, err := s.OpenStreamRecord(grpcStreamOpen(xrr.StreamServer, "files.FileService", "Download", msg))
 	require.NoError(t, err)
 	assert.Equal(t, "58a4bf3f", rec.Fingerprint())
 
@@ -75,10 +93,7 @@ func TestOpenStreamRecordServer(t *testing.T) {
 func TestOpenStreamRecordCounterN(t *testing.T) {
 	dir := t.TempDir()
 	s := xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette(dir))
-	open := xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamClient,
-		Service: "files.FileService", Method: "Upload",
-	}
+	open := grpcStreamOpen(xrr.StreamClient, "files.FileService", "Upload", nil)
 
 	rec1, err := s.OpenStreamRecord(open)
 	require.NoError(t, err)
@@ -103,10 +118,7 @@ func TestOpenStreamRecordCounterN(t *testing.T) {
 	assert.Equal(t, 1, p2.ReqPayload["n"])
 
 	// A different tuple starts its own count.
-	rec3, err := s.OpenStreamRecord(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamBidi,
-		Service: "chat.ChatService", Method: "Converse",
-	})
+	rec3, err := s.OpenStreamRecord(grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Converse", nil))
 	require.NoError(t, err)
 	assert.Equal(t, "c6233d2e", rec3.Fingerprint())
 }
@@ -116,10 +128,7 @@ func TestOpenStreamRecordCounterN(t *testing.T) {
 func TestStreamRecordingTerminalIsFinal(t *testing.T) {
 	dir := t.TempDir()
 	s := xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette(dir))
-	rec, err := s.OpenStreamRecord(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamBidi,
-		Service: "chat.ChatService", Method: "Converse",
-	})
+	rec, err := s.OpenStreamRecord(grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Converse", nil))
 	require.NoError(t, err)
 	rec.RecordSend([]byte("ping-1"))
 	rec.RecordRecv([]byte("pong-1"))
@@ -142,11 +151,8 @@ func TestStreamRecordingTerminalIsFinal(t *testing.T) {
 func TestStreamRecordingErrorTerminal(t *testing.T) {
 	dir := t.TempDir()
 	s := xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette(dir))
-	rec, err := s.OpenStreamRecord(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamServer,
-		Service: "files.FileService", Method: "Download",
-		Message: []byte(`{"path":"/var/log/big.log"}`),
-	})
+	rec, err := s.OpenStreamRecord(grpcStreamOpen(
+		xrr.StreamServer, "files.FileService", "Download", []byte(`{"path":"/var/log/big.log"}`)))
 	require.NoError(t, err)
 	rec.RecordSend([]byte(`{"path":"/var/log/big.log"}`))
 	rec.RecordHalfClose()
@@ -166,10 +172,7 @@ func TestStreamRecordingErrorTerminal(t *testing.T) {
 
 func TestOpenStreamReplayBidi(t *testing.T) {
 	s := fixtureSession(t, "grpc-bidi-stream")
-	rep, err := s.OpenStreamReplay(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamBidi,
-		Service: "chat.ChatService", Method: "Converse",
-	})
+	rep, err := s.OpenStreamReplay(grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Converse", nil))
 	require.NoError(t, err)
 	assert.Equal(t, "c6233d2e", rep.Fingerprint())
 	assert.Equal(t, xrr.StreamBidi, rep.Type())
@@ -195,10 +198,7 @@ func TestOpenStreamReplayBidi(t *testing.T) {
 
 func TestStreamReplaySendMismatchIsTerminal(t *testing.T) {
 	s := fixtureSession(t, "grpc-bidi-stream")
-	rep, err := s.OpenStreamReplay(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamBidi,
-		Service: "chat.ChatService", Method: "Converse",
-	})
+	rep, err := s.OpenStreamReplay(grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Converse", nil))
 	require.NoError(t, err)
 
 	require.NoError(t, rep.Send([]byte("ping-1")))
@@ -218,10 +218,7 @@ func TestStreamReplaySendMismatchIsTerminal(t *testing.T) {
 
 func TestStreamReplayShortHalfCloseIsMismatch(t *testing.T) {
 	s := fixtureSession(t, "grpc-client-stream")
-	rep, err := s.OpenStreamReplay(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamClient,
-		Service: "files.FileService", Method: "Upload",
-	})
+	rep, err := s.OpenStreamReplay(grpcStreamOpen(xrr.StreamClient, "files.FileService", "Upload", nil))
 	require.NoError(t, err)
 
 	require.NoError(t, rep.Send([]byte("part-one\n")))
@@ -233,10 +230,7 @@ func TestStreamReplayShortHalfCloseIsMismatch(t *testing.T) {
 // the non-poisoning stream-done signal; the recv side is unaffected.
 func TestStreamReplayPostCompletionSend(t *testing.T) {
 	s := fixtureSession(t, "grpc-client-stream")
-	rep, err := s.OpenStreamReplay(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamClient,
-		Service: "files.FileService", Method: "Upload",
-	})
+	rep, err := s.OpenStreamReplay(grpcStreamOpen(xrr.StreamClient, "files.FileService", "Upload", nil))
 	require.NoError(t, err)
 
 	require.NoError(t, rep.Send([]byte("part-one\n")))
@@ -256,11 +250,8 @@ func TestStreamReplayPostCompletionSend(t *testing.T) {
 // the same recorded error.
 func TestStreamReplayMidStreamError(t *testing.T) {
 	s := fixtureSession(t, "grpc-stream-error")
-	rep, err := s.OpenStreamReplay(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamServer,
-		Service: "files.FileService", Method: "Download",
-		Message: []byte(`{"path":"/var/log/big.log"}`),
-	})
+	rep, err := s.OpenStreamReplay(grpcStreamOpen(
+		xrr.StreamServer, "files.FileService", "Download", []byte(`{"path":"/var/log/big.log"}`)))
 	require.NoError(t, err)
 	assert.Equal(t, "9e8c4d4c", rep.Fingerprint())
 	assert.Equal(t, 14, rep.RespPayload()["status_code"])
@@ -289,11 +280,8 @@ func TestStreamReplayMidStreamError(t *testing.T) {
 func TestStreamReplayEmptyStreams(t *testing.T) {
 	t.Run("server empty resp", func(t *testing.T) {
 		s := fixtureSession(t, "grpc-stream-empty")
-		rep, err := s.OpenStreamReplay(xrr.StreamOpen{
-			AdapterID: "grpc", Type: xrr.StreamServer,
-			Service: "files.FileService", Method: "Download",
-			Message: []byte(`{"path":"/etc/empty"}`),
-		})
+		rep, err := s.OpenStreamReplay(grpcStreamOpen(
+			xrr.StreamServer, "files.FileService", "Download", []byte(`{"path":"/etc/empty"}`)))
 		require.NoError(t, err)
 		_, err = rep.Recv()
 		assert.ErrorIs(t, err, io.EOF, "first read yields end-of-stream")
@@ -301,10 +289,7 @@ func TestStreamReplayEmptyStreams(t *testing.T) {
 
 	t.Run("client immediate half-close", func(t *testing.T) {
 		s := fixtureSession(t, "grpc-stream-empty")
-		rep, err := s.OpenStreamReplay(xrr.StreamOpen{
-			AdapterID: "grpc", Type: xrr.StreamClient,
-			Service: "telemetry.MetricsService", Method: "Push",
-		})
+		rep, err := s.OpenStreamReplay(grpcStreamOpen(xrr.StreamClient, "telemetry.MetricsService", "Push", nil))
 		require.NoError(t, err)
 		require.NoError(t, rep.HalfClose(), "S=0: immediate half-close accepted")
 		msg, err := rep.Recv()
@@ -316,10 +301,7 @@ func TestStreamReplayEmptyStreams(t *testing.T) {
 
 	t.Run("bidi no traffic", func(t *testing.T) {
 		s := fixtureSession(t, "grpc-stream-empty")
-		rep, err := s.OpenStreamReplay(xrr.StreamOpen{
-			AdapterID: "grpc", Type: xrr.StreamBidi,
-			Service: "chat.ChatService", Method: "Ping",
-		})
+		rep, err := s.OpenStreamReplay(grpcStreamOpen(xrr.StreamBidi, "chat.ChatService", "Ping", nil))
 		require.NoError(t, err)
 		require.NoError(t, rep.HalfClose())
 		_, err = rep.Recv()
@@ -333,29 +315,23 @@ func TestStreamReplayMissAndShapeMismatch(t *testing.T) {
 	s := xrr.NewSession(xrr.ModeReplay, c)
 
 	// No pair on disk ⇒ cassette miss.
-	_, err := s.OpenStreamReplay(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamBidi, Service: "s", Method: "m",
-	})
+	_, err := s.OpenStreamReplay(grpcStreamOpen(xrr.StreamBidi, "s", "m", nil))
 	assert.ErrorIs(t, err, xrr.ErrCassetteMiss)
 
 	// A unary pair at the streamed fingerprint ⇒ shape mismatch, not a miss.
-	fp, err := xrr.StreamFingerprint(xrr.StreamOpen{
-		Type: xrr.StreamBidi, Service: "s", Method: "m",
-	}, 1)
+	fp, err := xrr.StreamFingerprint(grpcStreamOpen(xrr.StreamBidi, "s", "m", nil), 1)
 	require.NoError(t, err)
 	require.NoError(t, c.Save("grpc", fp,
 		map[string]any{"service": "s", "method": "m"},
 		map[string]any{"status_code": 0}, nil))
-	_, err = s.OpenStreamReplay(xrr.StreamOpen{
-		AdapterID: "grpc", Type: xrr.StreamBidi, Service: "s", Method: "m",
-	})
+	_, err = s.OpenStreamReplay(grpcStreamOpen(xrr.StreamBidi, "s", "m", nil))
 	assert.ErrorIs(t, err, xrr.ErrShapeMismatch)
 	assert.NotErrorIs(t, err, xrr.ErrCassetteMiss)
 }
 
 func TestOpenStreamModeEnforcement(t *testing.T) {
 	dir := t.TempDir()
-	open := xrr.StreamOpen{AdapterID: "grpc", Type: xrr.StreamBidi, Service: "s", Method: "m"}
+	open := grpcStreamOpen(xrr.StreamBidi, "s", "m", nil)
 
 	replaySession := xrr.NewSession(xrr.ModeReplay, xrr.NewFileCassette(dir))
 	assert.Equal(t, xrr.ModeReplay, replaySession.Mode())
