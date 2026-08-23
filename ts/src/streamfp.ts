@@ -109,6 +109,14 @@ export function streamFingerprint(open: StreamOpen, n: number): string {
  * Server-stream fingerprint — the single request message is available at
  * open, mirroring unary: canonical
  * {"method":…,"msg_hash":…,"service":…,"stream":"server"}.
+ *
+ * `message` MUST already be in the form the cassette addresses. When a
+ * session carries a frame scrub hook, that means the SCRUBBED bytes: the
+ * spec derives `msg_hash` over scrubbed bytes in record and replay alike,
+ * so passing raw bytes here on a scrubbing session computes a fingerprint
+ * that no cassette holds. Pass frames loaded from a cassette (already
+ * scrubbed at record time), or the output of `session.scrubStreamFrame`.
+ * The gRPC adapter does the latter; prefer it over calling this directly.
  */
 export function serverStreamFingerprint(
   service: string,
