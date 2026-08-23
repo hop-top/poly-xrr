@@ -790,9 +790,28 @@ each other's `n`, and the recomputed fingerprints miss. A dir whose entries
 happen to occupy distinct counter domains survives any order by
 composition, not by guarantee.
 
-Until the schema gains an explicit sequencing affordance, runners that open
-multiple counter-addressed pairs from one dir under a shared counter domain
-MUST establish the order themselves, ascending by the req payload's `n`.
+Until the schema gains an explicit sequencing affordance, runners MUST
+establish the order themselves. The rule is scoped to a counter domain,
+because that is the only scope in which order is observable:
+
+- Partition the dir's entries by counter domain — the tuple `(service,
+  method, stream type)` for `client` and `bidi` entries. Server-stream
+  entries are content-addressed, use no counter, and belong to no domain.
+- **Within** one counter domain, open ascending by the req payload's `n`.
+  Every entry in such a domain records an `n` (writers MUST record it at
+  open), and within one domain those `n` values are distinct — one per
+  occurrence — so this determines a unique order with no tiebreak needed.
+- **Across** distinct counter domains, and for server-stream entries, open
+  order is unconstrained: no interleaving changes any fingerprint, because
+  no two such opens ever draw from the same counter. Runners MAY open them
+  in any order, and MUST NOT rely on one.
+
+The rule is therefore total: it fixes the order of exactly the opens whose
+order is load-bearing, and declares the rest order-independent. It never
+appeals to the entries' order in the file, and never needs to compare an
+entry that records `n` against one that does not — server-stream entries
+(which omit `n`) are never members of a domain being sorted.
+
 This is the one sanctioned use of payload `n`: sequencing a *fixture*
 replay whose opens are not otherwise ordered. It remains prohibited as a
 matching input — replay still recomputes its own counter and MUST NOT read

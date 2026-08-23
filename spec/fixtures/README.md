@@ -38,15 +38,23 @@ normative as written.
 ## Manifest order is not an open sequence
 
 `interactions` is an unordered set of pairs that must replay. Runners
-opening multiple counter-addressed (`client` / `bidi`) pairs from one dir
-under a shared counter domain must sort by the req payload's `n` — see
+establish the open order themselves, ascending by the req payload's `n`
+*within* a counter domain — the `(service, method, stream type)` tuple of a
+`client`/`bidi` open. Across distinct domains, and for server streams
+(content-addressed, no counter, no `n`), order is unconstrained. See
 [Manifest Extension](../cassette-format-streaming.md#manifest-extension).
+
 Only `grpc-client-stream-repeat` currently has entries sharing a counter
-domain; the others survive any order by composition, not by guarantee.
+domain, so it is the only dir where the rule constrains anything; the others
+are order-independent by composition. Because a dir that is order-dependent
+only incidentally would let the rule rot unnoticed, every port sorts
+explicitly rather than relying on file order: reordering any manifest here
+must leave all suites green.
 
 ## Negative fixtures
 
-`grpc-stream-malformed-b64` MUST fail to load and is deliberately absent
-from its own `manifest.yaml` — `interactions` enumerates pairs whose replay
-must succeed, and the schema cannot mark an expected rejection. Harnesses
-target it by path. See that dir's README.
+`grpc-stream-malformed-b64` MUST fail to load. Its `manifest.yaml` exists
+but lists no entries (`interactions: []`): the pair is deliberately NOT
+listed, because `interactions` enumerates pairs whose replay must succeed
+and the schema cannot mark an expected rejection. Harnesses target it by
+path. See that dir's README.
