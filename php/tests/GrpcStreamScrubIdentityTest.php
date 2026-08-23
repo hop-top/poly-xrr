@@ -128,6 +128,44 @@ class GrpcStreamScrubIdentityTest extends TestCase
         $this->assertNull($rep->recv(), 'end of stream after the last recorded frame');
     }
 
+    /**
+     * The call log a byte-neutral hook must produce for one recordFixed of
+     * this type: one send call per send frame, one recv call per recv
+     * frame, in frame order.
+     *
+     * M1..M3 pair their byte-identity assertions with this expectation.
+     * Byte identity alone is vacuous for a byte-neutral hook — with the
+     * hook dispatch removed the hooked and unhooked branches become the
+     * same computation, so the comparison holds by construction whether or
+     * not the hook ever ran. The call log supplies the missing half:
+     * positive evidence of invocation.
+     *
+     * @return list<string>
+     */
+    private function fixedFrameCalls(StreamType $type): array
+    {
+        $want = $this->fixedSendCalls($type);
+        foreach ($this->fixedRecvs($type) as $f) {
+            $want[] = 'recv:' . $f;
+        }
+
+        return $want;
+    }
+
+    /**
+     * Replay scrubs live sends only (M5); recorded recv frames are
+     * delivered verbatim.
+     *
+     * @return list<string>
+     */
+    private function fixedSendCalls(StreamType $type): array
+    {
+        return array_map(
+            static fn (string $f): string => 'send:' . $f,
+            $this->fixedSends($type)
+        );
+    }
+
     /** @return array{string, string} */
     private function pairBytes(string $dir, string $fp): array
     {
@@ -151,6 +189,12 @@ class GrpcStreamScrubIdentityTest extends TestCase
      * M1: an installed identity hook is byte-indistinguishable from no
      * hook. Any divergence is a mechanics defect — an extra scrub site, a
      * missed one, or an identity input derived from the wrong bytes.
+     *
+     * The hooked branch runs a COUNTING identity hook, and the call log is
+     * asserted alongside the bytes. Byte equality on its own proves only
+     * that the two sessions agree, which a hook that never ran also
+     * satisfies; the log proves the hook was installed AND invoked while
+     * agreeing.
      */
     #[DataProvider('streamTypes')]
     public function testIdentityHookMatchesNoHook(StreamType $type): void
@@ -158,14 +202,21 @@ class GrpcStreamScrubIdentityTest extends TestCase
         $bare   = $this->tmpDir();
         $hooked = $this->tmpDir();
 
+        $log      = new CountingScrub();
         $bareFP   = $this->recordFixed($bare, $type, null);
-        $hookedFP = $this->recordFixed($hooked, $type, new IdentityScrub());
+        $hookedFP = $this->recordFixed($hooked, $type, $log);
 
         $this->assertSame($bareFP, $hookedFP, 'identity hook must not move the fingerprint');
         $this->assertSame(
             $this->pairBytes($bare, $bareFP),
             $this->pairBytes($hooked, $hookedFP),
             'cassette bytes must be identical'
+        );
+        $this->assertSame(
+            $this->fixedFrameCalls($type),
+            $log->seen,
+            'the identity hook must actually run — byte equality alone is '
+            . 'satisfied by a hook that never fired'
         );
     }
 
@@ -174,28 +225,54 @@ class GrpcStreamScrubIdentityTest extends TestCase
      * the hook boundary both ways. The one legitimate exception to clause
      * 5's "same hook both sides" — it holds precisely because the two agree
      * byte-for-byte.
+     *
+     * Each direction installs a COUNTING identity hook on its hooked side
+     * and asserts the log. A green cross-hook replay is otherwise equally
+     * consistent with a hook that was never dispatched — the exception is
+     * only meaningful if the hook is genuinely present on one side and
+     * absent on the other.
      */
     #[DataProvider('streamTypes')]
     public function testIdentityHookReplaysAcrossTheHookBoundary(StreamType $type): void
     {
         $withHook = $this->tmpDir();
-        $this->recordFixed($withHook, $type, new IdentityScrub());
+        $recLog   = new CountingScrub();
+        $this->recordFixed($withHook, $type, $recLog);
+        $this->assertSame(
+            $this->fixedFrameCalls($type),
+            $recLog->seen,
+            "the recording side's hook must actually run"
+        );
         $this->replayFixed($withHook, $type, null);
 
         $without = $this->tmpDir();
         $this->recordFixed($without, $type, null);
-        $this->replayFixed($without, $type, new IdentityScrub());
+        $repLog = new CountingScrub();
+        $this->replayFixed($without, $type, $repLog);
+        $this->assertSame(
+            $this->fixedSendCalls($type),
+            $repLog->seen,
+            "the replaying side's hook must actually run"
+        );
     }
 
     /**
      * M3: clause 3 routes content-derived identity through the hook. Under
      * identity it must land on the raw msg_hash in both modes — otherwise
      * the hook is applied to the wrong buffer, or applied twice.
+     *
+     * A COUNTING identity hook supplies the routing evidence. msgHash of
+     * identity-scrubbed bytes equalling msgHash of the raw bytes is a
+     * tautology for any byte-neutral hook, and holds even if
+     * scrubStreamFrame never dispatches — the assertion that clause 3's
+     * route exists is the call log, exactly one call carrying the raw
+     * bytes.
      */
     public function testIdentityDerivedIdentityEqualsRaw(): void
     {
         foreach ([Mode::Record, Mode::Replay] as $mode) {
-            $s        = $this->session($this->tmpDir(), $mode, new IdentityScrub());
+            $log      = new CountingScrub();
+            $s        = $this->session($this->tmpDir(), $mode, $log);
             $scrubbed = $s->scrubStreamFrame(
                 StreamDirection::Send,
                 'grpc',
@@ -206,6 +283,11 @@ class GrpcStreamScrubIdentityTest extends TestCase
                 StreamFingerprint::msgHash(self::OPEN_MSG),
                 StreamFingerprint::msgHash($scrubbed),
                 $mode->value
+            );
+            $this->assertSame(
+                ['send:' . self::OPEN_MSG],
+                $log->seen,
+                $mode->value . ': identity derivation must route through the hook exactly once'
             );
         }
     }

@@ -83,6 +83,25 @@ async function replayFixed(dir: string, type: StreamType, scrub?: StreamScrubFn)
   expect(() => rep.recv()).toThrow(ErrEndOfStream);
 }
 
+/**
+ * The call log a byte-neutral hook must produce for one `recordFixed` of
+ * this type: one send call per send frame, one recv call per recv frame,
+ * in frame order.
+ *
+ * M1..M3 pair their byte-identity assertions with this expectation. Byte
+ * identity alone is vacuous for a byte-neutral hook — with the hook
+ * dispatch removed the hooked and unhooked branches become the same
+ * computation, so the comparison holds by construction whether or not the
+ * hook ever ran. The call log supplies the missing half: positive evidence
+ * of invocation.
+ */
+function fixedFrameCalls(type: StreamType): ScrubCall[] {
+  return [
+    ...fixedSends(type).map((f): ScrubCall => ["send", td.decode(f)]),
+    ...fixedRecvs(type).map((f): ScrubCall => ["recv", td.decode(f)]),
+  ];
+}
+
 function pairBytes(dir: string, fp: string): [string, string] {
   return [
     fs.readFileSync(path.join(dir, `grpc-${fp}.req.yaml`), "utf8"),
@@ -96,14 +115,22 @@ describe("identity-hook scrub conformance", () => {
   // M1: an installed identity hook is byte-indistinguishable from no hook.
   // Any divergence is a mechanics defect — an extra scrub site, a missed
   // one, or an identity input derived from the wrong bytes.
+  //
+  // The hooked branch runs a COUNTING identity hook, and the call log is
+  // asserted alongside the bytes. Byte equality on its own proves only
+  // that the two sessions agree, which a hook that never ran also
+  // satisfies; the log proves the hook was installed AND invoked while
+  // agreeing.
   for (const type of TYPES) {
     it(`${type}: identity hook produces the same bytes as no hook`, async () => {
       const bare = tmpDir();
       const hooked = tmpDir();
+      const log: ScrubCall[] = [];
       const bareFP = await recordFixed(bare, type);
-      const hookedFP = await recordFixed(hooked, type, identityScrub);
+      const hookedFP = await recordFixed(hooked, type, countingScrub(log));
       expect(hookedFP).toBe(bareFP);
       expect(pairBytes(hooked, hookedFP)).toEqual(pairBytes(bare, bareFP));
+      expect(log, "the identity hook must actually run").toEqual(fixedFrameCalls(type));
     });
   }
 
@@ -111,26 +138,52 @@ describe("identity-hook scrub conformance", () => {
   // hook boundary both ways. The one legitimate exception to clause 5's
   // "same hook both sides" — it holds precisely because the two agree
   // byte-for-byte.
+  //
+  // Each direction installs a COUNTING identity hook on its hooked side
+  // and asserts the log. A green cross-hook replay is otherwise equally
+  // consistent with a hook that was never dispatched — the exception is
+  // only meaningful if the hook is genuinely present on one side and
+  // absent on the other.
   for (const type of TYPES) {
     it(`${type}: replays across the hook boundary in both directions`, async () => {
       const withHook = tmpDir();
-      await recordFixed(withHook, type, identityScrub);
+      const recLog: ScrubCall[] = [];
+      await recordFixed(withHook, type, countingScrub(recLog));
+      expect(recLog, "the recording side's hook must actually run").toEqual(
+        fixedFrameCalls(type)
+      );
       await replayFixed(withHook, type, undefined);
 
       const without = tmpDir();
       await recordFixed(without, type);
-      await replayFixed(without, type, identityScrub);
+      const repLog: ScrubCall[] = [];
+      await replayFixed(without, type, countingScrub(repLog));
+      // Replay scrubs live sends only (M5); recorded recv frames are
+      // delivered verbatim.
+      expect(repLog, "the replaying side's hook must actually run").toEqual(
+        fixedSends(type).map((f): ScrubCall => ["send", td.decode(f)])
+      );
     });
   }
 
   // M3: clause 3 routes content-derived identity through the hook. Under
   // identity it must land on the raw msg_hash in both modes — otherwise
   // the hook is applied to the wrong buffer, or applied twice.
+  //
+  // A COUNTING identity hook supplies the routing evidence. msgHash of
+  // identity-scrubbed bytes equalling msgHash of the raw bytes is a
+  // tautology for any byte-neutral hook, and holds even if
+  // `scrubStreamFrame` never dispatches — the assertion that clause 3's
+  // route exists is the call log, exactly one call carrying the raw bytes.
   for (const mode of ["record", "replay"] as const) {
     it(`${mode}: identity-derived msg_hash equals the raw one`, () => {
-      const s = new FileSession(mode, new FileCassette(tmpDir()), identityScrub);
+      const log: ScrubCall[] = [];
+      const s = new FileSession(mode, new FileCassette(tmpDir()), countingScrub(log));
       const scrubbed = s.scrubStreamFrame("send", { adapterID: "grpc", type: "server" }, OPEN_MSG);
       expect(msgHash(scrubbed)).toBe(msgHash(OPEN_MSG));
+      expect(log, "identity derivation must route through the hook exactly once").toEqual([
+        ["send", td.decode(OPEN_MSG)],
+      ]);
     });
   }
 

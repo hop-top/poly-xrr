@@ -223,3 +223,29 @@ def test_absent_hook_records_verbatim(tmp_path: Path):
 
     pair = FileCassette(str(tmp_path)).load_stream("grpc", rec.fingerprint)
     assert pair.req_stream.frames[0].message == f"ping {SECRET}".encode()
+
+
+def test_no_aliasing_of_caller_buffers(tmp_path: Path):
+    """Clause 8: a caller mutating the buffer it handed over cannot reach
+    stored frames.
+
+    Python is the only port where this is expressible — ``bytearray`` is a
+    mutable buffer accepted where ``bytes`` is expected. Rust's ``&[u8]``
+    and PHP's value-type strings make the bug structurally impossible, so
+    those ports pin nothing here; go and ts pin it with a slice mutation.
+    """
+
+    def passthrough(_d: str, _i: StreamScrubInfo, data: bytes) -> bytes:
+        return data
+
+    open_ = grpc_open(BIDI, "chat.ChatService", "Converse")
+    rec_s = Session(RECORD, FileCassette(str(tmp_path)), stream_scrub=passthrough)
+    rec = rec_s.open_stream_record(open_)
+    live = bytearray(b"ping")
+    rec.record_send(live)
+    live[0] = ord("X")  # mutate after handing it over — must not reach disk
+    rec.record_half_close()
+    rec.finish({"status_code": 0})
+
+    pair = FileCassette(str(tmp_path)).load_stream("grpc", rec.fingerprint)
+    assert pair.req_stream.frames[0].message == b"ping"

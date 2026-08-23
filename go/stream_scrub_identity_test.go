@@ -95,6 +95,27 @@ func fixedRecvs(typ xrr.StreamType) [][]byte {
 	return [][]byte{[]byte("one"), []byte("two")}
 }
 
+// fixedFrameCalls is the call log a byte-neutral hook must produce for one
+// recordFixedStream of the given type: one send call per send frame, one
+// recv call per recv frame, in frame order.
+//
+// M1..M3 pair their byte-identity assertions with this expectation. Byte
+// identity alone is vacuous for a byte-neutral hook — with the hook
+// dispatch removed the hooked and unhooked branches become the same
+// computation, so the comparison holds by construction whether or not the
+// hook ever ran. The call log supplies the missing half: positive evidence
+// of invocation.
+func fixedFrameCalls(typ xrr.StreamType) []scrubCall {
+	want := make([]scrubCall, 0, 4)
+	for _, f := range fixedSends(typ) {
+		want = append(want, scrubCall{xrr.StreamSend, string(f)})
+	}
+	for _, f := range fixedRecvs(typ) {
+		want = append(want, scrubCall{xrr.StreamRecv, string(f)})
+	}
+	return want
+}
+
 func readPairBytes(t *testing.T, dir, fp string) (string, string) {
 	t.Helper()
 	req, err := os.ReadFile(filepath.Join(dir, "grpc-"+fp+".req.yaml"))
@@ -109,20 +130,29 @@ func readPairBytes(t *testing.T, dir, fp string) (string, string) {
 // fingerprint, all three stream types. Any divergence here is a mechanics
 // defect: an extra scrub site, a missed one, or an identity input derived
 // from the wrong bytes.
+//
+// The hooked branch runs a COUNTING identity hook, and the call log is
+// asserted alongside the bytes. Byte equality on its own proves only that
+// the two sessions agree, which a hook that never ran also satisfies; the
+// log proves the hook was installed AND invoked while agreeing.
 func TestScrubIdentityMatchesNoHook(t *testing.T) {
 	for _, typ := range []xrr.StreamType{xrr.StreamServer, xrr.StreamClient, xrr.StreamBidi} {
 		t.Run(string(typ), func(t *testing.T) {
 			bare := t.TempDir()
 			hooked := t.TempDir()
 
+			var log []scrubCall
 			bareFP := recordFixedStream(t, bare, typ, nil)
-			hookedFP := recordFixedStream(t, hooked, typ, identityScrub)
+			hookedFP := recordFixedStream(t, hooked, typ, countingScrub(&log))
 			assert.Equal(t, bareFP, hookedFP, "identity hook must not move the fingerprint")
 
 			bareReq, bareResp := readPairBytes(t, bare, bareFP)
 			hookReq, hookResp := readPairBytes(t, hooked, hookedFP)
 			assert.Equal(t, bareReq, hookReq, "req.yaml must be byte-identical")
 			assert.Equal(t, bareResp, hookResp, "resp.yaml must be byte-identical")
+
+			assert.Equal(t, fixedFrameCalls(typ), log,
+				"the identity hook must actually run — byte equality alone is satisfied by a hook that never fired")
 		})
 	}
 }
@@ -131,6 +161,12 @@ func TestScrubIdentityMatchesNoHook(t *testing.T) {
 // no bytes, a cassette crosses the hook boundary in both directions. This
 // is the one legitimate exception to clause 5's "same hook both sides",
 // and it holds precisely because the two hooks agree byte-for-byte.
+//
+// Each direction installs a COUNTING identity hook on its hooked side and
+// asserts the log. A green cross-hook replay is otherwise equally
+// consistent with a hook that was never dispatched — the exception is only
+// meaningful if the hook is genuinely present on one side and absent on
+// the other.
 func TestScrubIdentityReplayCrossHook(t *testing.T) {
 	replayFixed := func(t *testing.T, dir string, typ xrr.StreamType, scrub xrr.StreamScrubFunc) {
 		t.Helper()
@@ -158,13 +194,24 @@ func TestScrubIdentityReplayCrossHook(t *testing.T) {
 	for _, typ := range []xrr.StreamType{xrr.StreamServer, xrr.StreamClient, xrr.StreamBidi} {
 		t.Run(string(typ)+"/recorded with hook, replayed without", func(t *testing.T) {
 			dir := t.TempDir()
-			recordFixedStream(t, dir, typ, identityScrub)
+			var log []scrubCall
+			recordFixedStream(t, dir, typ, countingScrub(&log))
+			assert.Equal(t, fixedFrameCalls(typ), log, "the recording side's hook must actually run")
 			replayFixed(t, dir, typ, nil)
 		})
 		t.Run(string(typ)+"/recorded without hook, replayed with", func(t *testing.T) {
 			dir := t.TempDir()
 			recordFixedStream(t, dir, typ, nil)
-			replayFixed(t, dir, typ, identityScrub)
+
+			var log []scrubCall
+			replayFixed(t, dir, typ, countingScrub(&log))
+			// Replay scrubs live sends only (M5); recorded recv frames are
+			// delivered verbatim.
+			want := make([]scrubCall, 0, 2)
+			for _, f := range fixedSends(typ) {
+				want = append(want, scrubCall{xrr.StreamSend, string(f)})
+			}
+			assert.Equal(t, want, log, "the replaying side's hook must actually run")
 		})
 	}
 }
@@ -174,18 +221,27 @@ func TestScrubIdentityReplayCrossHook(t *testing.T) {
 // the same msg_hash as the raw bytes, in record and replay mode alike —
 // otherwise the hook is being applied to the wrong buffer, or applied
 // twice, at the identity site.
+//
+// A COUNTING identity hook supplies the routing evidence. sha256 of
+// identity-scrubbed bytes equalling sha256 of the raw bytes is a tautology
+// for any byte-neutral hook, and holds even if ScrubStreamFrame never
+// dispatches — the assertion that clause 3's route exists is the call log,
+// exactly one call per invocation carrying the raw bytes.
 func TestScrubIdentityDerivedIdentity(t *testing.T) {
 	msg := []byte(`{"cmd":"deploy"}`)
 	rawSum := sha256.Sum256(msg)
 	rawHash := hex.EncodeToString(rawSum[:4])
 
 	for _, mode := range []xrr.Mode{xrr.ModeRecord, xrr.ModeReplay} {
-		s := xrr.NewSessionWithStreamScrub(mode, xrr.NewFileCassette(t.TempDir()), identityScrub)
+		var log []scrubCall
+		s := xrr.NewSessionWithStreamScrub(mode, xrr.NewFileCassette(t.TempDir()), countingScrub(&log))
 		scrubbed := s.ScrubStreamFrame(xrr.StreamSend,
 			xrr.StreamScrubInfo{AdapterID: "grpc", Type: xrr.StreamServer}, msg)
 		sum := sha256.Sum256(scrubbed)
 		assert.Equal(t, rawHash, hex.EncodeToString(sum[:4]),
 			"identity-derived msg_hash must equal the raw one in mode %v", mode)
+		assert.Equal(t, []scrubCall{{xrr.StreamSend, string(msg)}}, log,
+			"identity derivation must route through the hook exactly once in mode %v", mode)
 	}
 }
 

@@ -95,6 +95,23 @@ def replay_fixed(tmp: Path, stype: str, scrub) -> None:
         rep.recv()
 
 
+def fixed_frame_calls(stype: str) -> list[tuple[str, bytes]]:
+    """The call log a byte-neutral hook must produce for one ``record_fixed``
+    of this type: one send call per send frame, one recv call per recv
+    frame, in frame order.
+
+    M1..M3 pair their byte-identity assertions with this expectation. Byte
+    identity alone is vacuous for a byte-neutral hook — with the hook
+    dispatch removed the hooked and unhooked branches become the same
+    computation, so the comparison holds by construction whether or not the
+    hook ever ran. The call log supplies the missing half: positive
+    evidence of invocation.
+    """
+    return [(SEND, f) for f in fixed_sends(stype)] + [
+        (RECV, f) for f in fixed_recvs(stype)
+    ]
+
+
 def pair_bytes(tmp: Path, fp: str) -> tuple[str, str]:
     return (
         (tmp / f"grpc-{fp}.req.yaml").read_text(),
@@ -106,16 +123,26 @@ def pair_bytes(tmp: Path, fp: str) -> tuple[str, str]:
 def test_identity_hook_matches_no_hook(tmp_path: Path, stype: str):
     """M1: an installed identity hook is byte-indistinguishable from no
     hook. Any divergence is a mechanics defect — an extra scrub site, a
-    missed one, or an identity input derived from the wrong bytes."""
+    missed one, or an identity input derived from the wrong bytes.
+
+    The hooked branch runs a COUNTING identity hook, and the call log is
+    asserted alongside the bytes. Byte equality on its own proves only that
+    the two sessions agree, which a hook that never ran also satisfies; the
+    log proves the hook was installed AND invoked while agreeing."""
     bare = tmp_path / "bare"
     hooked = tmp_path / "hooked"
     bare.mkdir()
     hooked.mkdir()
 
+    log: list[tuple[str, bytes]] = []
     bare_fp = record_fixed(bare, stype, None)
-    hooked_fp = record_fixed(hooked, stype, identity_scrub)
+    hooked_fp = record_fixed(hooked, stype, counting_scrub(log))
     assert bare_fp == hooked_fp, "identity hook must not move the fingerprint"
     assert pair_bytes(bare, bare_fp) == pair_bytes(hooked, hooked_fp)
+    assert log == fixed_frame_calls(stype), (
+        "the identity hook must actually run — byte equality alone is "
+        "satisfied by a hook that never fired"
+    )
 
 
 @pytest.mark.parametrize("stype", [SERVER, CLIENT, BIDI])
@@ -123,29 +150,54 @@ def test_identity_hook_replays_across_the_hook_boundary(tmp_path: Path, stype: s
     """M2: because the identity hook changes no bytes, a cassette crosses
     the hook boundary both ways. The one legitimate exception to clause 5's
     "same hook both sides" — it holds precisely because the two agree
-    byte-for-byte."""
+    byte-for-byte.
+
+    Each direction installs a COUNTING identity hook on its hooked side and
+    asserts the log. A green cross-hook replay is otherwise equally
+    consistent with a hook that was never dispatched — the exception is
+    only meaningful if the hook is genuinely present on one side and absent
+    on the other."""
     with_hook = tmp_path / "with"
     without = tmp_path / "without"
     with_hook.mkdir()
     without.mkdir()
 
-    record_fixed(with_hook, stype, identity_scrub)
+    rec_log: list[tuple[str, bytes]] = []
+    record_fixed(with_hook, stype, counting_scrub(rec_log))
+    assert rec_log == fixed_frame_calls(stype), "the recording side's hook must actually run"
     replay_fixed(with_hook, stype, None)
 
     record_fixed(without, stype, None)
-    replay_fixed(without, stype, identity_scrub)
+    rep_log: list[tuple[str, bytes]] = []
+    replay_fixed(without, stype, counting_scrub(rep_log))
+    # Replay scrubs live sends only (M5); recorded recv frames are
+    # delivered verbatim.
+    assert rep_log == [(SEND, f) for f in fixed_sends(stype)], (
+        "the replaying side's hook must actually run"
+    )
 
 
 @pytest.mark.parametrize("mode", [RECORD, REPLAY])
 def test_identity_derived_identity_equals_raw(tmp_path: Path, mode: str):
     """M3: clause 3 routes content-derived identity through the hook. Under
     identity it must land on the raw msg_hash in both modes — otherwise the
-    hook is applied to the wrong buffer, or applied twice."""
-    s = Session(mode, FileCassette(str(tmp_path)), stream_scrub=identity_scrub)
+    hook is applied to the wrong buffer, or applied twice.
+
+    A COUNTING identity hook supplies the routing evidence. msg_hash of
+    identity-scrubbed bytes equalling msg_hash of the raw bytes is a
+    tautology for any byte-neutral hook, and holds even if
+    ``scrub_stream_frame`` never dispatches — the assertion that clause 3's
+    route exists is the call log, exactly one call carrying the raw
+    bytes."""
+    log: list[tuple[str, bytes]] = []
+    s = Session(mode, FileCassette(str(tmp_path)), stream_scrub=counting_scrub(log))
     scrubbed = s.scrub_stream_frame(
         SEND, StreamScrubInfo(adapter_id="grpc", type=SERVER), OPEN_MSG
     )
     assert msg_hash(scrubbed) == msg_hash(OPEN_MSG)
+    assert log == [(SEND, OPEN_MSG)], (
+        "identity derivation must route through the hook exactly once"
+    )
 
 
 def test_counting_hook_record_invocations(tmp_path: Path):
