@@ -33,7 +33,7 @@ jobs:
           mirror: hop-top/xrr-py
           pypi-auth: token
           python-version: '3.12'
-          test-command: pip install -e . && pytest
+          test-command: pip install -e '.[dev]' && pytest
         xrr-rs:
           dir: rs
           ecosystem: rs
