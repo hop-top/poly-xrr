@@ -42,13 +42,6 @@
       "package-name": "hop-top-xrr",
       "changelog-path": "CHANGELOG.md",
       "bump-minor-pre-major": true,
-      "extra-files": [
-        {
-          "type": "toml",
-          "path": "pyproject.toml",
-          "jsonpath": "$.project.version"
-        }
-      ],
       "prerelease": true,
       "prerelease-type": "alpha.0",
       "versioning": "prerelease"
