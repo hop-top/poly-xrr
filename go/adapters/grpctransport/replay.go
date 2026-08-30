@@ -166,7 +166,7 @@ type replayStream struct {
 
 // serve runs the connection: preface, SETTINGS, then the frame loop.
 func (r *replayConn) serve() {
-	defer r.conn.Close()
+	defer func() { _ = r.conn.Close() }()
 
 	// The client writes the preface before anything else.
 	pre := make([]byte, len(http2.ClientPreface))

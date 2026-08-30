@@ -1,0 +1,9 @@
+# Host tooling for the Makefile's gates. `mise install` provisions
+# everything the soft-fallback hints in the Makefile reference.
+#
+# golangci-lint is pinned (org convention: never @latest — drifted
+# local versions silently disagree on findings; 2.12.2 matches the
+# poly- repo CI standard).
+[tools]
+golangci-lint = "2.12.2"
+uv = "0.10.9"
