@@ -4,9 +4,16 @@
 
 ```
 git clone ...
-task test     # all 5 languages
-task lint     # all 5 linters
+make test        # Go (canonical) — fast default
+make test-all    # all 5 languages
+make lint-all    # all 5 linters
+make check-all   # lint + test + e2e, all 5 languages (pre-merge gate)
 ```
+
+Per-language targets (`test-py`, `lint-rs`, `e2e-ts`, …) are in the
+[Makefile](Makefile). Host lint tooling is pinned in `mise.toml`
+(`mise install` provisions it). For a container with every toolchain
+preinstalled: `make dev-up && make dev-exec`.
 
 ## Adding an adapter
 

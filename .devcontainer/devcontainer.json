@@ -1,0 +1,56 @@
+{
+  "name": "xrr",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/go:1": {
+      "version": "1.24"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "22"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.13",
+      "installTools": false
+    },
+    "ghcr.io/devcontainers/features/rust:1": {
+      "version": "latest",
+      "profile": "default",
+      "components": "rust-analyzer,rust-src,rustfmt,clippy"
+    },
+    "ghcr.io/devcontainers/features/php:1": {
+      "version": "8.3",
+      "installComposer": true
+    },
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/jungaretti/features/make:1": {}
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "containerEnv": {
+    "XDEBUG_MODE": "off"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "dbaeumer.vscode-eslint",
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "rust-lang.rust-analyzer",
+        "bmewburn.vscode-intelephense-client",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        "go.lintTool": "golangci-lint",
+        "go.toolsManagement.autoUpdate": false,
+        "python.defaultInterpreterPath": "/usr/local/bin/python3",
+        "rust-analyzer.linkedProjects": ["rs/Cargo.toml"],
+        "files.associations": {
+          ".github/workflows/*.yml": "github-actions-workflow"
+        }
+      }
+    }
+  },
+  "remoteUser": "vscode"
+}
