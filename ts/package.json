@@ -1,6 +1,11 @@
 {
   "name": "@hop-top/xrr",
   "version": "0.1.0-alpha.4",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hop-top/poly-xrr.git",
+    "directory": "ts"
+  },
   "type": "module",
   "description": "Multi-channel interaction recorder/replayer",
   "main": "./src/index.ts",
