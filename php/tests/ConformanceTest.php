@@ -339,13 +339,17 @@ class ConformanceTest extends TestCase
             $golden = new FileCassette($this->fixturesDir() . '/' . $entry);
             $tmp    = sys_get_temp_dir() . '/xrr_reemit_' . uniqid();
             mkdir($tmp);
-            $cassette = new FileCassette($tmp);
-            foreach ($interactions as $i) {
-                $cassette->saveStreamed($golden->loadStreamed($i['adapter'], $i['fingerprint']));
-                foreach (['req', 'resp'] as $kind) {
-                    $name = "{$i['adapter']}-{$i['fingerprint']}.$kind.yaml";
-                    $files["$entry/$name"] = (string) file_get_contents("$tmp/$name");
+            try {
+                $cassette = new FileCassette($tmp);
+                foreach ($interactions as $i) {
+                    $cassette->saveStreamed($golden->loadStreamed($i['adapter'], $i['fingerprint']));
+                    foreach (['req', 'resp'] as $kind) {
+                        $name = "{$i['adapter']}-{$i['fingerprint']}.$kind.yaml";
+                        $files["$entry/$name"] = (string) file_get_contents("$tmp/$name");
+                    }
                 }
+            } finally {
+                $this->removeTree($tmp);
             }
         }
 
