@@ -143,11 +143,14 @@ class ConformanceTest extends TestCase
                 // Re-emit into a fresh dir, reload, compare field-for-field.
                 $tmp = sys_get_temp_dir() . '/xrr_conf_' . uniqid();
                 mkdir($tmp);
-                $reCassette = new FileCassette($tmp);
-                $reCassette->saveStreamed($pair);
-                $reloaded = $reCassette->loadStreamed($interaction['adapter'], $interaction['fingerprint']);
-
-                $this->assertSameInteraction($pair, $reloaded, "$entry {$interaction['fingerprint']}");
+                try {
+                    $reCassette = new FileCassette($tmp);
+                    $reCassette->saveStreamed($pair);
+                    $reloaded = $reCassette->loadStreamed($interaction['adapter'], $interaction['fingerprint']);
+                    $this->assertSameInteraction($pair, $reloaded, "$entry {$interaction['fingerprint']}");
+                } finally {
+                    $this->removeTree($tmp);
+                }
             }
         }
 
