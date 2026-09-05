@@ -2,9 +2,11 @@ package fs_test
 
 import (
 	"encoding/base64"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	xrr "hop.top/xrr"
 	"hop.top/xrr/adapters/fs"
 
 	"github.com/stretchr/testify/assert"
@@ -92,6 +94,29 @@ func TestFingerprintRejectsWrongType(t *testing.T) {
 type notFsRequest struct{}
 
 func (notFsRequest) AdapterID() string { return "not-fs" }
+
+// TestFingerprintConformanceFsWrite — cross-runtime conformance: the
+// spec/fixtures/fs-write request MUST hash to 667a7680, the value the
+// TypeScript, Python, Rust, and PHP ports each pin. The request is loaded
+// through the cassette rather than hand-built so the fixture bytes are
+// pinned too: a drift in either the fixture or the fingerprint fails here.
+func TestFingerprintConformanceFsWrite(t *testing.T) {
+	dir := filepath.Join("..", "..", "..", "spec", "fixtures", "fs-write")
+	var req fs.Request
+	var resp fs.Response
+	_, err := xrr.NewFileCassette(dir).Load("fs", "667a7680", &req, &resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, fs.OpWrite, req.Op)
+	assert.Equal(t, "$TMP/greeting.txt", req.Path)
+	assert.Equal(t, "hello, world\n", req.Data)
+	require.NotNil(t, req.Mode)
+	assert.Equal(t, uint32(420), *req.Mode) // 0o644
+
+	fp, err := fs.NewAdapter().Fingerprint(&req)
+	require.NoError(t, err)
+	assert.Equal(t, "667a7680", fp, "spec conformance fingerprint mismatch")
+}
 
 // Task 3: PathNormalizer tests.
 
