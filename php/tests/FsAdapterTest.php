@@ -6,6 +6,7 @@ namespace HopTop\Xrr\Tests;
 
 use HopTop\Xrr\Adapters\FsAdapter;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Yaml\Yaml;
 
 class FsAdapterTest extends TestCase
 {
@@ -65,6 +66,24 @@ class FsAdapterTest extends TestCase
         $this->assertSame($a->fingerprint($bare), $a->fingerprint($with));
     }
 
+    public function testFingerprintNullModeHashesAsUnset(): void
+    {
+        $a        = new FsAdapter();
+        $bare     = ['op' => 'write', 'path' => '/x', 'data' => 'y'];
+        $withNull = ['op' => 'write', 'path' => '/x', 'data' => 'y', 'mode' => null];
+        $this->assertSame($a->fingerprint($bare), $a->fingerprint($withNull),
+            'mode => null must omit mode from the fingerprint');
+    }
+
+    public function testFingerprintZeroModeDistinctFromUnset(): void
+    {
+        $a        = new FsAdapter();
+        $bare     = ['op' => 'write', 'path' => '/x', 'data' => 'y'];
+        $withZero = ['op' => 'write', 'path' => '/x', 'data' => 'y', 'mode' => 0];
+        $this->assertNotSame($a->fingerprint($bare), $a->fingerprint($withZero),
+            'mode => 0 must include mode: 0 in the fingerprint; presence matters');
+    }
+
     /**
      * Conformance: cross-runtime fingerprint MUST equal "667a7680" for the
      * canonical fs-write fixture. Locks the canonical-JSON contract with
@@ -96,6 +115,32 @@ class FsAdapterTest extends TestCase
         $resp = ['duration_ms' => 1, 'bytes_written' => 13];
         $ser  = $a->serializeResp($resp);
         $this->assertSame($resp, $a->deserializeResp($ser));
+    }
+
+    /**
+     * Spec "Data Field Encoding": binary callers base64-encode before the
+     * adapter sees `data`; the adapter and the YAML layer treat the string
+     * as opaque; the caller decodes on the way back.
+     */
+    public function testSerializeBase64PayloadRoundTripThroughYaml(): void
+    {
+        $a       = new FsAdapter();
+        $raw     = "\x00\xff\xc3\x28\x80\x01\x02\x03";
+        $encoded = base64_encode($raw);
+        $req     = ['op' => 'write', 'path' => '/bin/x', 'data' => $encoded];
+
+        $text = Yaml::dump($a->serializeReq($req));
+        $this->assertStringContainsString($encoded, $text);
+        $this->assertStringNotContainsString('!!binary', $text);
+
+        $parsed = Yaml::parse($text);
+        self::assertIsArray($parsed);
+        $got = $a->deserializeReq($parsed);
+        self::assertIsArray($got);
+        $this->assertSame($encoded, $got['data'], 'base64 string must round-trip exactly');
+        $this->assertSame($raw, base64_decode($got['data'], true), 'caller recovers the original bytes');
+        $this->assertSame($a->fingerprint($req), $a->fingerprint($got),
+            'text or base64, the fingerprint only sees bytes');
     }
     // --- Path normalizer hook ---------------------------------------------
 
