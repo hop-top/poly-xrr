@@ -1,0 +1,5 @@
+interactions:
+  - adapter: redis
+    fingerprint: "b8aff36f"
+    verify_fingerprint: true
+    description: "args carry every hazard class into the joined canonical string"

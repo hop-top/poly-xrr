@@ -1,0 +1,6 @@
+xrr: "1"
+adapter: fs
+fingerprint: "99ac690f"
+recorded_at: "2026-09-05T00:00:00Z"
+payload:
+  duration_ms: 1

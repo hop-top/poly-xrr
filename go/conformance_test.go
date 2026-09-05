@@ -11,6 +11,11 @@ import (
 
 	"gopkg.in/yaml.v3"
 	xrr "hop.top/xrr"
+	execadapter "hop.top/xrr/adapters/exec"
+	fsadapter "hop.top/xrr/adapters/fs"
+	httpadapter "hop.top/xrr/adapters/http"
+	redisadapter "hop.top/xrr/adapters/redis"
+	sqladapter "hop.top/xrr/adapters/sql"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,6 +34,10 @@ type manifestEntry struct {
 	Adapter     string `yaml:"adapter"`
 	Fingerprint string `yaml:"fingerprint"`
 	Streamed    bool   `yaml:"streamed"`
+	// VerifyFingerprint marks a unary entry whose fingerprint is a
+	// computed value: the walker rebuilds the adapter's request from
+	// the req payload and recomputes it with the adapter's algorithm.
+	VerifyFingerprint bool `yaml:"verify_fingerprint"`
 }
 
 type manifest struct {
@@ -103,13 +112,67 @@ func TestConformanceFixtures(t *testing.T) {
 					conformStreamedPair(t, c, interaction.Adapter, interaction.Fingerprint)
 					continue
 				}
-				var reqPayload, respPayload map[string]any
-				_, err := c.Load(interaction.Adapter, interaction.Fingerprint, &reqPayload, &respPayload)
-				assert.NoError(t, err,
-					"cassette miss: adapter=%s fp=%s", interaction.Adapter, interaction.Fingerprint)
+				conformUnaryPair(t, c, interaction.Adapter, interaction.Fingerprint, interaction.VerifyFingerprint)
 			}
 		})
 	}
+}
+
+// conformUnaryPair loads one unary pair through the v1 code path and, when
+// the manifest pins the fingerprint, recomputes it from the loaded request
+// with the adapter's own algorithm. Loading alone cannot expose a
+// canonical-JSON escaping fork — the files load in every port; the derived
+// key is what differs.
+func conformUnaryPair(t *testing.T, c *xrr.FileCassette, adapter, fingerprint string, verify bool) {
+	t.Helper()
+	var reqPayload, respPayload map[string]any
+	_, err := c.Load(adapter, fingerprint, &reqPayload, &respPayload)
+	if !assert.NoError(t, err, "cassette miss: adapter=%s fp=%s", adapter, fingerprint) || !verify {
+		return
+	}
+	got, err := recomputeUnaryFingerprint(c, adapter, fingerprint)
+	require.NoError(t, err)
+	assert.Equal(t, fingerprint, got,
+		"unary fingerprint recomputation must match manifest: adapter=%s", adapter)
+}
+
+// recomputeUnaryFingerprint decodes the req payload into the adapter's typed
+// request and runs the adapter's Fingerprint over it.
+func recomputeUnaryFingerprint(c *xrr.FileCassette, adapter, fingerprint string) (string, error) {
+	var resp map[string]any
+	switch adapter {
+	case "exec":
+		var req execadapter.Request
+		if _, err := c.Load(adapter, fingerprint, &req, &resp); err != nil {
+			return "", err
+		}
+		return execadapter.NewAdapter().Fingerprint(&req)
+	case "http":
+		var req httpadapter.Request
+		if _, err := c.Load(adapter, fingerprint, &req, &resp); err != nil {
+			return "", err
+		}
+		return httpadapter.NewAdapter().Fingerprint(&req)
+	case "sql":
+		var req sqladapter.Request
+		if _, err := c.Load(adapter, fingerprint, &req, &resp); err != nil {
+			return "", err
+		}
+		return sqladapter.NewAdapter().Fingerprint(&req)
+	case "fs":
+		var req fsadapter.Request
+		if _, err := c.Load(adapter, fingerprint, &req, &resp); err != nil {
+			return "", err
+		}
+		return fsadapter.NewAdapter().Fingerprint(&req)
+	case "redis":
+		var req redisadapter.Request
+		if _, err := c.Load(adapter, fingerprint, &req, &resp); err != nil {
+			return "", err
+		}
+		return redisadapter.NewAdapter().Fingerprint(&req)
+	}
+	return "", fmt.Errorf("verify_fingerprint: no unary fingerprint model for adapter %q", adapter)
 }
 
 // conformStreamedPair exercises the format-layer obligations on one streamed
@@ -261,11 +324,7 @@ func TestConformanceManifestOrderIrrelevant(t *testing.T) {
 					conformStreamedPair(t, c, interaction.Adapter, interaction.Fingerprint)
 					continue
 				}
-				var reqPayload, respPayload map[string]any
-				_, err := c.Load(interaction.Adapter, interaction.Fingerprint, &reqPayload, &respPayload)
-				assert.NoError(t, err,
-					"cassette miss under reversed manifest: adapter=%s fp=%s",
-					interaction.Adapter, interaction.Fingerprint)
+				conformUnaryPair(t, c, interaction.Adapter, interaction.Fingerprint, interaction.VerifyFingerprint)
 			}
 		})
 	}

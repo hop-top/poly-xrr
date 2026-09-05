@@ -1,0 +1,6 @@
+xrr: "1"
+adapter: redis
+fingerprint: "b8aff36f"
+recorded_at: "2026-09-05T00:00:00Z"
+payload:
+  result: OK

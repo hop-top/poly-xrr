@@ -1,0 +1,11 @@
+xrr: "1"
+adapter: http
+fingerprint: "1dda8e8b"
+recorded_at: "2026-09-05T00:00:00Z"
+payload:
+  method: POST
+  url: "https://api.example.com/v1/search?q=a&b&order=asc&path=/nested"
+  headers:
+    Content-Type: "application/json; charset=utf-8"
+    X-Hazard: "&<>/é\u2028\u2029\b\f\x1f\x7f"
+  body: "{\"q\":\"&<>/é\u2028\u2029\b\f\x1f\x7f\"}"

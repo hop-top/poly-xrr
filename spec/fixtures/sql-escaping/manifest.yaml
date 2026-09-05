@@ -1,0 +1,5 @@
+interactions:
+  - adapter: sql
+    fingerprint: "90d9ea4a"
+    verify_fingerprint: true
+    description: "query text carries &<>/é (never whitespace-class hazards); args carry every hazard class"
