@@ -253,6 +253,24 @@ describe("FsAdapter path normalizer", () => {
     expect(calls).toBe(0);
   });
 
+  test("dest is gated on the normalized value, not the raw one", async () => {
+    // spec: `dest` participates only when non-empty AFTER normalization.
+    const drop: PathNormalizer = (p) => (p === "/x/drop" ? "" : p);
+    const a = new FsAdapter().withNormalizer(drop);
+    const noDest = await a.fingerprint({ op: "rename", path: "/a" });
+    const dropped = await a.fingerprint({ op: "rename", path: "/a", dest: "/x/drop" });
+    const kept = await a.fingerprint({ op: "rename", path: "/a", dest: "/x/keep" });
+    expect(dropped).toBe(noDest);
+    expect(kept).not.toBe(noDest);
+  });
+
+  test("empty dest stays omitted regardless of the normalizer", async () => {
+    const a = new FsAdapter().withNormalizer((p) => (p === "" ? "/ghost" : p));
+    const noDest = await a.fingerprint({ op: "rename", path: "/a" });
+    const empty = await a.fingerprint({ op: "rename", path: "/a", dest: "" });
+    expect(empty).toBe(noDest);
+  });
+
   test("chainNormalizers composes left to right", () => {
     const tmpToPlaceholder: PathNormalizer = (p) => p.replace("/tmp", "$TMP");
     const placeholderToShort: PathNormalizer = (p) => p.replace("$TMP", "$T");
