@@ -53,7 +53,7 @@ fn fs_fingerprint_matches_hazard_vector() {
         path: hazard(),
         ..Default::default()
     };
-    assert_eq!(FsAdapter.fingerprint(&req).unwrap(), "6f2fb087");
+    assert_eq!(FsAdapter::new().fingerprint(&req).unwrap(), "6f2fb087");
 }
 
 #[test]
