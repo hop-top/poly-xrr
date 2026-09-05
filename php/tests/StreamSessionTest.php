@@ -20,6 +20,7 @@ use HopTop\Xrr\Stream\StreamFingerprint;
 use HopTop\Xrr\Stream\StreamOpen;
 use HopTop\Xrr\Stream\StreamType;
 use PHPUnit\Framework\TestCase;
+use Psr\Clock\ClockInterface;
 
 /**
  * Session-level stream record/replay machinery
@@ -176,6 +177,38 @@ class StreamSessionTest extends TestCase
         $this->assertSame('files.FileService', $pair->reqPayload['service']);
         $this->assertSame('Download', $pair->reqPayload['method']);
         $this->assertArrayNotHasKey('n', $pair->reqPayload);
+    }
+
+    /**
+     * Every timestamp in the pair comes from the session clock: at_ms is
+     * the elapsed time since the clock's reading at open, recorded_at its
+     * reading at finish. A scripted clock therefore yields byte-determined
+     * cassettes — the seam byte-comparing tests rely on.
+     */
+    public function testStreamRecordingStampsFromTheSessionClock(): void
+    {
+        $dir   = $this->tempDir();
+        $clock = new TickingClock(new \DateTimeImmutable('2026-01-02T03:04:05Z'));
+        $s     = new Session(Mode::Record, new FileCassette($dir), null, $clock);
+
+        $rec = $s->openStreamRecord($this->grpcOpen(StreamType::Bidi, 'chat.ChatService', 'Converse'));
+        $rec->recordSend('alpha');
+        $rec->recordHalfClose();
+        $rec->recordRecv('one');
+        $rec->finish(['status_code' => 0]);
+
+        $pair = (new FileCassette($dir))->loadStreamed('grpc', $rec->fingerprint());
+
+        // One reading at open, then one per event, 1 ms apart.
+        $this->assertSame(1, $pair->req->frames[0]->atMs);
+        $this->assertNotNull($pair->req->halfClose);
+        $this->assertSame(2, $pair->req->halfClose->atMs);
+        $this->assertSame(3, $pair->resp->frames[0]->atMs);
+        $this->assertSame(4, $pair->resp->end->atMs);
+
+        // The envelope stamp is the reading at finish, to the second, UTC.
+        $this->assertSame('2026-01-02T03:04:05Z', $pair->reqRecordedAt);
+        $this->assertSame('2026-01-02T03:04:05Z', $pair->respRecordedAt);
     }
 
     public function testOpenStreamRecordCounterN(): void
@@ -568,5 +601,25 @@ class StreamSessionTest extends TestCase
         $this->assertSame('pong-2', $rep->recv());
         $rep->halfClose();
         $this->assertNull($rep->recv());
+    }
+}
+
+/** PSR-20 clock that advances one millisecond per reading. */
+final class TickingClock implements ClockInterface
+{
+    private int $ticks = 0;
+
+    private readonly int $startUs;
+
+    public function __construct(\DateTimeImmutable $start)
+    {
+        $this->startUs = (int) $start->format('U') * 1_000_000 + (int) $start->format('u');
+    }
+
+    public function now(): \DateTimeImmutable
+    {
+        $us = $this->startUs + 1_000 * $this->ticks++;
+
+        return new \DateTimeImmutable(sprintf('@%d.%06d', intdiv($us, 1_000_000), $us % 1_000_000));
     }
 }

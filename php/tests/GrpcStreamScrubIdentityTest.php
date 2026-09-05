@@ -14,6 +14,7 @@ use HopTop\Xrr\Stream\StreamScrub;
 use HopTop\Xrr\Stream\StreamType;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use Psr\Clock\ClockInterface;
 
 /**
  * Identity-hook conformance — spec "Scrub Hook Obligations — Identity-Hook
@@ -60,9 +61,13 @@ class GrpcStreamScrubIdentityTest extends TestCase
         return $dir;
     }
 
-    private function session(string $dir, Mode $mode, ?StreamScrub $scrub): Session
-    {
-        return new Session($mode, new FileCassette($dir), $scrub);
+    private function session(
+        string $dir,
+        Mode $mode,
+        ?StreamScrub $scrub,
+        ?ClockInterface $clock = null
+    ): Session {
+        return new Session($mode, new FileCassette($dir), $scrub, $clock);
     }
 
     private function fixedOpen(StreamType $type): StreamOpen
@@ -97,9 +102,13 @@ class GrpcStreamScrubIdentityTest extends TestCase
      * One identical scripted stream through a record session, so two
      * sessions differing only in hook installation are byte-comparable.
      */
-    private function recordFixed(string $dir, StreamType $type, ?StreamScrub $scrub): string
-    {
-        $s   = $this->session($dir, Mode::Record, $scrub);
+    private function recordFixed(
+        string $dir,
+        StreamType $type,
+        ?StreamScrub $scrub,
+        ?ClockInterface $clock = null
+    ): string {
+        $s   = $this->session($dir, Mode::Record, $scrub, $clock);
         $rec = $s->openStreamRecord($this->fixedOpen($type));
         foreach ($this->fixedSends($type) as $f) {
             $rec->recordSend($f);
@@ -202,9 +211,14 @@ class GrpcStreamScrubIdentityTest extends TestCase
         $bare   = $this->tmpDir();
         $hooked = $this->tmpDir();
 
+        // The pair embeds two clock readings — at_ms (since open) and
+        // recorded_at — so byte identity holds only when both recordings
+        // observe the same instants. Freeze the clock: a scheduling stall
+        // inside one recording must not tick its at_ms.
+        $clock    = new FrozenClock(new \DateTimeImmutable('2026-01-02T03:04:05Z'));
         $log      = new CountingScrub();
-        $bareFP   = $this->recordFixed($bare, $type, null);
-        $hookedFP = $this->recordFixed($hooked, $type, $log);
+        $bareFP   = $this->recordFixed($bare, $type, null, $clock);
+        $hookedFP = $this->recordFixed($hooked, $type, $log, $clock);
 
         $this->assertSame($bareFP, $hookedFP, 'identity hook must not move the fingerprint');
         $this->assertSame(
@@ -444,6 +458,17 @@ final class CountingScrub implements StreamScrub
         $this->seen[] = $dir->value . ':' . $data;
 
         return $data;
+    }
+}
+
+/** PSR-20 clock pinned to one instant: every reading is the same. */
+final class FrozenClock implements ClockInterface
+{
+    public function __construct(private readonly \DateTimeImmutable $at) {}
+
+    public function now(): \DateTimeImmutable
+    {
+        return $this->at;
     }
 }
 

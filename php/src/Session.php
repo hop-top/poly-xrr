@@ -14,10 +14,13 @@ use HopTop\Xrr\Stream\StreamRecording;
 use HopTop\Xrr\Stream\StreamReplay;
 use HopTop\Xrr\Stream\StreamScrub;
 use HopTop\Xrr\Stream\StreamType;
+use Psr\Clock\ClockInterface;
 
 class Session
 {
     private ?OccurrenceCounter $streamOccurrences = null;
+
+    private readonly ClockInterface $clock;
 
     /**
      * @param ?StreamScrub $streamScrub frame-level secret scrubbing for
@@ -26,12 +29,20 @@ class Session
      *   is symmetric by design, and a session replaying a scrubbed cassette
      *   without the hook fails with a stream mismatch
      *   (cassette-format-streaming.md, REDACTION WARNING).
+     * @param ?ClockInterface $clock source of every timestamp a streamed
+     *   recording writes: `at_ms` on each event (milliseconds since the
+     *   open reading) and the envelope `recorded_at`. Null reads a
+     *   {@see MonotonicClock}. Inject a frozen or scripted clock when the
+     *   cassette bytes must not depend on when they were recorded.
      */
     public function __construct(
         private Mode $mode,
         private FileCassette $cassette,
-        private ?StreamScrub $streamScrub = null
-    ) {}
+        private ?StreamScrub $streamScrub = null,
+        ?ClockInterface $clock = null
+    ) {
+        $this->clock = $clock ?? new MonotonicClock();
+    }
 
     /** The session's mode. Adapters dispatch their own behaviour on it. */
     public function mode(): Mode
@@ -138,7 +149,8 @@ class Session
             $fp,
             $open->type,
             $payload,
-            $this->streamScrub
+            $this->streamScrub,
+            $this->clock
         );
     }
 
