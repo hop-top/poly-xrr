@@ -86,8 +86,10 @@ class FsAdapter:
             fields["uid"] = req.uid
         if req.gid is not None:
             fields["gid"] = req.gid
-        if req.dest:
-            fields["dest"] = self._normalize(req.dest)
+        # spec: dest participates only when non-empty AFTER normalization.
+        dest = self._normalize(req.dest)
+        if dest:
+            fields["dest"] = dest
         if req.size is not None:
             fields["size"] = req.size
         if req.flags != 0:
@@ -113,8 +115,11 @@ class FsAdapter:
             out["uid"] = req.uid
         if req.gid is not None:
             out["gid"] = req.gid
-        if req.dest:
-            out["dest"] = self.normalize(req.dest)
+        # Same gate as fingerprint(): a dest that normalizes to "" is
+        # omitted, so the stored and hashed forms agree.
+        dest = self.normalize(req.dest)
+        if dest:
+            out["dest"] = dest
         if req.size is not None:
             out["size"] = req.size
         if req.flags != 0:
