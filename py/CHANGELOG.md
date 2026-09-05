@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.6](https://github.com/hop-top/poly-xrr/compare/xrr-py/v0.1.0-alpha.5...xrr-py/v0.1.0-alpha.6) (2026-09-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **py:** cassettes whose fingerprinted fields contain non-ASCII or U+007F characters re-fingerprint under RFC 8785 escaping; re-record them.
+
+### Bug Fixes
+
+* canonicalize fingerprint JSON per RFC 8785 across ports ([791ccc7](https://github.com/hop-top/poly-xrr/commit/791ccc7e3cf792a0dc5c06c179b9a72ad550d509))
+* gate fs dest on the normalized value in Go and Python ([#52](https://github.com/hop-top/poly-xrr/issues/52)) ([4fad662](https://github.com/hop-top/poly-xrr/commit/4fad6628dc08af8dd27a44ee5637544a12e07835))
+* **py:** canonicalize fingerprint JSON per RFC 8785 ([0caa5e0](https://github.com/hop-top/poly-xrr/commit/0caa5e013d741963cea6eb0b0000016c42580d14))
+
 ## [0.1.0-alpha.5](https://github.com/hop-top/poly-xrr/compare/xrr-py/v0.1.0-alpha.4...xrr-py/v0.1.0-alpha.5) (2026-08-30)
 
 
