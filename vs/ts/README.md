@@ -53,7 +53,7 @@ const resp2 = await repSession.record(adapter, req, async () => { throw new Erro
 ### Key differences
 
 - Polly.JS: archived (2021); xrr: actively maintained
-- Polly.JS: HTTP only; xrr: HTTP + exec + Redis + SQL
+- Polly.JS: HTTP only; xrr: HTTP + exec + Redis + SQL + fs
 - Polly.JS: HAR JSON (JS-specific); xrr: language-agnostic YAML
 - Polly.JS: complex plugin registration; xrr: one import, one session
 

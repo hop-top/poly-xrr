@@ -44,7 +44,7 @@ resp, _ := s.Record(ctx, xhttp.NewAdapter(), &xhttp.Request{
 
 - go-vcr wraps `http.Client`; xrr wraps the call site — works with any HTTP lib
 - go-vcr cassettes are Go-specific; xrr cassettes replay in any xrr port
-- go-vcr: HTTP only; xrr: HTTP + exec + gRPC + Redis + SQL in one session
+- go-vcr: HTTP only; xrr: HTTP + exec + gRPC + Redis + SQL + fs in one session
 
 ---
 
