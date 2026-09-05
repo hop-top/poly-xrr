@@ -159,6 +159,25 @@ func (w *Wrapper) Truncate(ctx context.Context, path string, size int64) error {
 // Compile-time check: Wrapper satisfies FS.
 var _ FS = (*Wrapper)(nil)
 
+// tmpNormalizer is the canonical PathNormalizer for a tmpdir-based
+// run: tmp itself becomes "$TMP" and any path below it becomes
+// "$TMP/<rest>". Only a true prefix match rewrites — a path that
+// merely contains tmp as a substring (a sibling with a longer name,
+// or tmp nested under another root) is returned unchanged.
+func tmpNormalizer(tmp string) xfs.PathNormalizer {
+	prefix := tmp + string(os.PathSeparator)
+	return func(p string) string {
+		switch {
+		case p == tmp:
+			return "$TMP"
+		case strings.HasPrefix(p, prefix):
+			return "$TMP" + p[len(tmp):]
+		default:
+			return p
+		}
+	}
+}
+
 // main demonstrates record-then-replay against a tmpdir, with the
 // canonical PathNormalizer installed.
 func main() {
@@ -182,8 +201,7 @@ func run() error {
 	}
 	target := filepath.Join(tmp, "hello.txt")
 
-	normalizer := func(p string) string { return strings.Replace(p, tmp, "$TMP", 1) }
-	adapter := xfs.NewAdapter().WithNormalizer(normalizer)
+	adapter := xfs.NewAdapter().WithNormalizer(tmpNormalizer(tmp))
 	ctx := context.Background()
 
 	// Record

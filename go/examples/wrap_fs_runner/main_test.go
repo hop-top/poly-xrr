@@ -20,9 +20,31 @@ import (
 // the tmpdir prefix is rewritten to "$TMP" so the cassette is stable
 // across runs and machines.
 func tmpAdapter(tmp string) *xfs.Adapter {
-	return xfs.NewAdapter().WithNormalizer(func(p string) string {
-		return strings.Replace(p, tmp, "$TMP", 1)
-	})
+	return xfs.NewAdapter().WithNormalizer(tmpNormalizer(tmp))
+}
+
+// TestTmpNormalizerRewritesPrefixOnly: the tmpdir itself and paths
+// below it are rewritten; a path that merely contains the tmpdir
+// string (a sibling with a longer name, or the same string nested
+// under another root) must come back untouched.
+func TestTmpNormalizerRewritesPrefixOnly(t *testing.T) {
+	sep := string(os.PathSeparator)
+	tmp := filepath.Join(sep+"tmp", "xrr-abc")
+	n := tmpNormalizer(tmp)
+
+	assert.Equal(t, "$TMP", n(tmp))
+	assert.Equal(t, "$TMP"+sep+"f", n(filepath.Join(tmp, "f")))
+	assert.Equal(t, "$TMP"+sep+"d"+sep+"f", n(filepath.Join(tmp, "d", "f")))
+	assert.Equal(t, "$TMP"+sep+"f", tmpAdapter(tmp).Normalize(filepath.Join(tmp, "f")))
+
+	for _, p := range []string{
+		tmp + "d" + sep + "f",           // longer sibling: /tmp/xrr-abcd/f
+		sep + "other" + tmp + sep + "f", // nested: /other/tmp/xrr-abc/f
+		filepath.Join(sep+"etc", "hosts"),
+		"",
+	} {
+		assert.Equal(t, p, n(p), "%q must not be rewritten", p)
+	}
 }
 
 // envelopeView is the subset of the on-disk envelope the tests inspect.
