@@ -270,3 +270,12 @@ func TestSerializeStoresPostNormalizerPath(t *testing.T) {
 	assert.NotContains(t, out, "/tmp/run-123",
 		"serialized payload must not leak the raw tmpdir path")
 }
+
+// Cross-port hazard vector (spec: Fingerprint Algorithm). The same path
+// pins the same fingerprint in every port.
+func TestFingerprintHazardVector(t *testing.T) {
+	hazard := "a&b<c>/é" + string(rune(0x2028)) + string(rune(0x2029)) + "\b\f\x1f\x7f"
+	fp, err := fs.NewAdapter().Fingerprint(&fs.Request{Op: "write", Path: hazard})
+	require.NoError(t, err)
+	assert.Equal(t, "6f2fb087", fp)
+}

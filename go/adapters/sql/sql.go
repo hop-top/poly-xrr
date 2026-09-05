@@ -1,14 +1,12 @@
 package sql
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
-	xrr "hop.top/xrr"
 	"gopkg.in/yaml.v3"
+	xrr "hop.top/xrr"
 )
 
 var wsRe = regexp.MustCompile(`\s+`)
@@ -47,16 +45,15 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("sql: unexpected request type %T", req)
 	}
-	canonical, err := json.Marshal(map[string]any{
+	fp, err := xrr.CanonicalFingerprint(map[string]any{
 		"query": normalizeQuery(r.Query),
 		"args":  r.Args,
 	})
 	if err != nil {
 		return "", fmt.Errorf("sql: fingerprint marshal: %w", err)
 	}
-	sum := sha256.Sum256(canonical)
-	return fmt.Sprintf("%x", sum[:4]), nil
+	return fp, nil
 }
 
-func (a *Adapter) Serialize(v any) ([]byte, error)          { return yaml.Marshal(v) }
+func (a *Adapter) Serialize(v any) ([]byte, error)           { return yaml.Marshal(v) }
 func (a *Adapter) Deserialize(data []byte, target any) error { return yaml.Unmarshal(data, target) }
