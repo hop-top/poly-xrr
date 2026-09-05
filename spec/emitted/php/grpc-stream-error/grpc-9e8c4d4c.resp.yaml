@@ -1,0 +1,18 @@
+xrr: "1"
+adapter: grpc
+fingerprint: "9e8c4d4c"
+recorded_at: "2026-08-23T12:00:00Z"
+error: "rpc error: code = Unavailable desc = connection reset"
+payload:
+  status_code: 14
+stream:
+  frames:
+    - seq: 2
+      message_b64: "bG9nLWNodW5rLTEK"
+      at_ms: 10
+    - seq: 3
+      message_b64: "bG9nLWNodW5rLTIK"
+      at_ms: 14
+  end:
+    seq: 4
+    at_ms: 30

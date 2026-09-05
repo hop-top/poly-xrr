@@ -1,0 +1,20 @@
+xrr: "1"
+adapter: grpc
+fingerprint: "b27b5fe1"
+recorded_at: "2026-08-23T12:00:01Z"
+payload:
+  service: files.FileService
+  method: Upload
+  'n': 1
+stream:
+  type: client
+  frames:
+    - seq: 0
+      message_b64: "YmV0YS0xCg=="
+      at_ms: 0
+    - seq: 1
+      message_b64: "YmV0YS0yCg=="
+      at_ms: 3
+  half_close:
+    seq: 2
+    at_ms: 4

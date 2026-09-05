@@ -15,9 +15,20 @@ use Symfony\Component\Yaml\Yaml;
 
 class ConformanceTest extends TestCase
 {
+    private const THIS_PORT = 'php';
+
     private function fixturesDir(): string
     {
         return dirname(__DIR__, 2) . '/spec/fixtures';
+    }
+
+    /**
+     * Each port's own re-emission of every streamed golden pair
+     * (spec/emitted/<port>/<fixture>/); see spec/emitted/README.md.
+     */
+    private function emittedDir(): string
+    {
+        return dirname(__DIR__, 2) . '/spec/emitted';
     }
 
     /** @return list<string> fixture dir names */
@@ -227,6 +238,151 @@ class ConformanceTest extends TestCase
         $this->assertSame('rpc error: code = Unavailable desc = connection reset', $pair->error);
         $this->assertSame(14, $pair->respPayload['status_code']);
         $this->assertSame(["log-chunk-1\n", "log-chunk-2\n"], array_map(fn($f) => $f->bytes, $pair->resp->frames));
+    }
+
+    public function testReemissionPinned(): void
+    {
+        // spec/emitted/php must hold exactly what saveStreamed emits today for
+        // every streamed golden pair, file set and bytes alike. Every port's
+        // suite loads that tree, so a stale tree would hide a PHP emit change
+        // from them. XRR_UPDATE_EMITTED=1 regenerates instead of asserting
+        // (`make emit-php`).
+        $want = $this->reemitStreamedFixtures();
+        $tree = $this->emittedDir() . '/' . self::THIS_PORT;
+
+        if ((getenv('XRR_UPDATE_EMITTED') ?: '') !== '') {
+            $this->removeTree($tree);
+            foreach ($want as $rel => $text) {
+                $path = "$tree/$rel";
+                if (!is_dir(dirname($path))) {
+                    mkdir(dirname($path), 0755, true);
+                }
+                file_put_contents($path, $text);
+            }
+            $this->addToAssertionCount(1);
+
+            return;
+        }
+
+        $this->assertDirectoryExists($tree, "missing $tree: regenerate with `make emit-php`");
+        $got = $this->readTree($tree);
+        ksort($want);
+        $this->assertSame(array_keys($want), array_keys($got), 'file set drifted: regenerate with `make emit-php`');
+        foreach ($want as $rel => $text) {
+            $this->assertSame($text, $got[$rel], "$rel drifted: regenerate with `make emit-php`");
+        }
+    }
+
+    public function testCrossPortReemissionsLoadToGolden(): void
+    {
+        // Every port's checked-in re-emission of every streamed golden pair
+        // must load through the PHP strict reader to the same model as the
+        // golden pair. Self-load round-trips cannot see an emit slip the
+        // emitting port's own reader tolerates; another port's reader can.
+        $root = $this->emittedDir();
+        $this->assertDirectoryExists($root, "missing $root: regenerate with `make emit-all`");
+        $ports = array_values(array_filter(
+            scandir($root),
+            fn($e) => $e !== '.' && $e !== '..' && is_dir("$root/$e")
+        ));
+        $this->assertNotEmpty($ports, "no port trees under $root");
+
+        foreach ($ports as $port) {
+            foreach ($this->streamedFixtureEntries() as $entry => $interactions) {
+                $golden  = new FileCassette($this->fixturesDir() . '/' . $entry);
+                $emitted = new FileCassette("$root/$port/$entry");
+                foreach ($interactions as $i) {
+                    $ctx  = "$port re-emission of $entry/{$i['adapter']}-{$i['fingerprint']}";
+                    $want = $golden->loadStreamed($i['adapter'], $i['fingerprint']);
+                    try {
+                        $got = $emitted->loadStreamed($i['adapter'], $i['fingerprint']);
+                    } catch (\Throwable $e) {
+                        $this->fail("$ctx: {$e->getMessage()} (regenerate with `make emit-$port`)");
+                    }
+                    $this->assertSameInteraction($want, $got, $ctx);
+                }
+            }
+        }
+    }
+
+    /**
+     * Fixture dirs with at least one streamed entry, sorted by name.
+     *
+     * @return array<string, list<array{adapter: string, fingerprint: string, streamed: bool}>>
+     */
+    private function streamedFixtureEntries(): array
+    {
+        $out = [];
+        foreach ($this->fixtureDirNames() as $entry) {
+            $streamed = array_values(array_filter(
+                $this->manifestInteractions($entry),
+                fn(array $i) => $i['streamed']
+            ));
+            if ($streamed !== []) {
+                $out[$entry] = $streamed;
+            }
+        }
+        ksort($out);
+
+        return $out;
+    }
+
+    /**
+     * Runs saveStreamed over every streamed golden pair.
+     *
+     * @return array<string, string> emitted files keyed by <fixture>/<adapter>-<fp>.<kind>.yaml
+     */
+    private function reemitStreamedFixtures(): array
+    {
+        $files = [];
+        foreach ($this->streamedFixtureEntries() as $entry => $interactions) {
+            $golden = new FileCassette($this->fixturesDir() . '/' . $entry);
+            $tmp    = sys_get_temp_dir() . '/xrr_reemit_' . uniqid();
+            mkdir($tmp);
+            $cassette = new FileCassette($tmp);
+            foreach ($interactions as $i) {
+                $cassette->saveStreamed($golden->loadStreamed($i['adapter'], $i['fingerprint']));
+                foreach (['req', 'resp'] as $kind) {
+                    $name = "{$i['adapter']}-{$i['fingerprint']}.$kind.yaml";
+                    $files["$entry/$name"] = (string) file_get_contents("$tmp/$name");
+                }
+            }
+        }
+
+        return $files;
+    }
+
+    /** @return array<string, string> every regular file under $root keyed by relative path */
+    private function readTree(string $root): array
+    {
+        $files = [];
+        $it    = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS)
+        );
+        foreach ($it as $file) {
+            /** @var \SplFileInfo $file */
+            $rel         = substr($file->getPathname(), strlen($root) + 1);
+            $files[$rel] = (string) file_get_contents($file->getPathname());
+        }
+        ksort($files);
+
+        return $files;
+    }
+
+    private function removeTree(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
+        }
+        $it = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($dir, \FilesystemIterator::SKIP_DOTS),
+            \RecursiveIteratorIterator::CHILD_FIRST
+        );
+        foreach ($it as $file) {
+            /** @var \SplFileInfo $file */
+            $file->isDir() ? rmdir($file->getPathname()) : unlink($file->getPathname());
+        }
+        rmdir($dir);
     }
 
     private function assertSameInteraction(StreamedInteraction $a, StreamedInteraction $b, string $ctx): void
