@@ -1,6 +1,8 @@
 """Conformance tests: load all fixture cassettes from spec/fixtures/."""
 from __future__ import annotations
 
+import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,10 @@ from xrr.stream import (
 
 # Resolve path relative to this file: tests/ -> py/ -> spec/fixtures/
 _FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent / "spec" / "fixtures"
+# Each port's own re-emission of every streamed golden pair
+# (spec/emitted/<port>/<fixture>/); see spec/emitted/README.md.
+_EMITTED_DIR = _FIXTURES_DIR.parent / "emitted"
+_THIS_PORT = "py"
 
 # Unary adapters whose fingerprint algorithm the walker can recompute.
 _UNARY_ADAPTERS = {
@@ -53,6 +59,23 @@ def _fixture_dirs() -> list[Path]:
     if not _FIXTURES_DIR.exists():
         return []
     return [p for p in _FIXTURES_DIR.iterdir() if p.is_dir()]
+
+
+def _streamed_fixture_dirs() -> list[tuple[Path, list[dict]]]:
+    """Fixture dirs with at least one streamed entry, sorted by name."""
+    out: list[tuple[Path, list[dict]]] = []
+    for d in sorted(_fixture_dirs()):
+        manifest = yaml.safe_load((d / "manifest.yaml").read_text())
+        entries = [i for i in (manifest.get("interactions") or []) if i.get("streamed")]
+        if entries:
+            out.append((d, entries))
+    return out
+
+
+def _emitted_ports() -> list[str]:
+    if not _EMITTED_DIR.exists():
+        return []
+    return sorted(p.name for p in _EMITTED_DIR.iterdir() if p.is_dir())
 
 
 def _in_open_order(fixture_dir: Path, interactions: list[dict]) -> list[dict]:
@@ -211,3 +234,74 @@ def test_client_stream_repeat_two_opens():
         pair = cassette.load_stream("grpc", fp)
         # Payload n is informational only; replay recomputes its own.
         assert pair.req_payload.get("n") == n
+
+
+def _reemit_streamed_fixtures(tmp_path: Path) -> dict[str, str]:
+    """Run save_stream over every streamed golden pair; return the emitted
+    files keyed by path relative to a port tree
+    (<fixture>/<adapter>-<fp>.<kind>.yaml)."""
+    files: dict[str, str] = {}
+    for d, entries in _streamed_fixture_dirs():
+        golden = FileCassette(str(d))
+        out = tmp_path / d.name
+        out.mkdir()
+        cassette = FileCassette(str(out))
+        for item in entries:
+            cassette.save_stream(golden.load_stream(item["adapter"], item["fingerprint"]))
+            for kind in ("req", "resp"):
+                name = f"{item['adapter']}-{item['fingerprint']}.{kind}.yaml"
+                files[f"{d.name}/{name}"] = (out / name).read_text(encoding="utf-8")
+    return files
+
+
+def test_reemission_pinned(tmp_path):
+    """spec/emitted/py must hold exactly what save_stream emits today for
+    every streamed golden pair, file set and bytes alike. Every port's suite
+    loads that tree, so a stale tree would hide a py emit change from them.
+    XRR_UPDATE_EMITTED=1 regenerates instead of asserting (`make emit-py`)."""
+    want = _reemit_streamed_fixtures(tmp_path)
+    tree = _EMITTED_DIR / _THIS_PORT
+
+    if os.environ.get("XRR_UPDATE_EMITTED"):
+        shutil.rmtree(tree, ignore_errors=True)
+        for rel, text in want.items():
+            path = tree / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+        return
+
+    assert tree.is_dir(), f"missing {tree}: regenerate with `make emit-py`"
+    got = {
+        p.relative_to(tree).as_posix(): p.read_text(encoding="utf-8")
+        for p in tree.rglob("*")
+        if p.is_file()
+    }
+    assert sorted(got) == sorted(want), "file set drifted: regenerate with `make emit-py`"
+    for rel, text in want.items():
+        assert got[rel] == text, f"{rel} drifted: regenerate with `make emit-py`"
+
+
+def test_emitted_port_trees_present():
+    assert _emitted_ports(), f"no port trees under {_EMITTED_DIR}: regenerate with `make emit-all`"
+
+
+@pytest.mark.parametrize("port", _emitted_ports())
+def test_cross_port_reemission_loads_to_golden(port: str):
+    """Every port's checked-in re-emission of every streamed golden pair must
+    load through the py strict reader to the same model as the golden pair.
+    Self-load round-trips cannot see an emit slip the emitting port's own
+    reader tolerates; another port's reader can."""
+    for d, entries in _streamed_fixture_dirs():
+        golden = FileCassette(str(d))
+        emitted = FileCassette(str(_EMITTED_DIR / port / d.name))
+        for item in entries:
+            adapter, fingerprint = item["adapter"], item["fingerprint"]
+            want = golden.load_stream(adapter, fingerprint)
+            try:
+                got = emitted.load_stream(adapter, fingerprint)
+            except Exception as exc:  # noqa: BLE001 — any loader failure is the finding
+                raise AssertionError(
+                    f"{port} re-emission of {d.name}/{adapter}-{fingerprint}: {exc} "
+                    f"(regenerate with `make emit-{port}`)"
+                ) from exc
+            _assert_pairs_equal(want, got)

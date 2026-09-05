@@ -122,3 +122,11 @@ loaders are exercised on them too, without affecting the key. YAML spelling:
 control characters and U+2028/U+2029 use double-quoted escapes (`"\b"`,
 `"\x1f"`, `"\u2028"`) so the files stay printable; `é` is raw UTF-8. All
 five YAML loaders decode these to identical bytes.
+
+## Re-emitted trees
+
+Each port's own re-emission of every streamed pair here is checked in under
+[`../emitted/<port>/`](../emitted/README.md), and every port's suite loads
+all of them back to the golden model. After adding or editing a streamed
+fixture, run `make emit-all` so those trees pick it up; a port whose tree is
+stale fails its own suite with a regenerate hint.

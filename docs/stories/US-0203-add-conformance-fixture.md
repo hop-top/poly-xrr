@@ -80,6 +80,8 @@ payload:
 - [ ] Fingerprint in `manifest.yaml` matches actual computed fingerprint
       (enforced by every walker for entries marked `verify_fingerprint: true`).
 - [ ] `manifest.yaml` schema validated (required fields present).
+- [ ] Streamed fixture only: `make emit-all` regenerates `spec/emitted/<port>/`
+      for every port; each port's cross-port re-emission test passes.
 
 ---
 

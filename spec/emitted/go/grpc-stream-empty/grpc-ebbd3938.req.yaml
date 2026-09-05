@@ -1,0 +1,14 @@
+xrr: "1"
+adapter: grpc
+fingerprint: "ebbd3938"
+recorded_at: "2026-08-23T12:00:00Z"
+payload:
+    method: Ping
+    "n": 0
+    service: chat.ChatService
+stream:
+    type: bidi
+    frames: []
+    half_close:
+        seq: 0
+        at_ms: 0
