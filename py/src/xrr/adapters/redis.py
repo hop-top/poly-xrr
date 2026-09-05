@@ -1,10 +1,10 @@
 """redis adapter — fingerprints on command + args."""
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any
+
+from ..stream import canonical_fingerprint
 
 
 @dataclass
@@ -23,8 +23,7 @@ class RedisAdapter:
 
     def fingerprint(self, req: RedisRequest) -> str:
         parts = [req.command.upper()] + list(req.args)
-        canonical = json.dumps(" ".join(parts), sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+        return canonical_fingerprint(" ".join(parts))
 
     def serialize_req(self, req: RedisRequest) -> dict[str, Any]:
         return {"command": req.command, "args": req.args}

@@ -12,9 +12,10 @@ on read). See spec/cassette-format-v1.md "Data Field Encoding".
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
+
+from ..stream import canonical_fingerprint
 
 # Op constants. Adopters SHOULD use these rather than literal strings.
 OP_WRITE = "write"
@@ -94,8 +95,7 @@ class FsAdapter:
             fields["flags"] = req.flags
         if req.recursive:
             fields["recursive"] = True
-        canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+        return canonical_fingerprint(fields)
 
     def serialize_req(self, req: FsRequest) -> dict[str, Any]:
         # Apply path normalization here so the persisted cassette

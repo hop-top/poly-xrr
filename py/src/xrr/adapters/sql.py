@@ -1,11 +1,11 @@
 """sql adapter — fingerprints on normalized query + args."""
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from ..stream import canonical_fingerprint
 
 _WS = re.compile(r"\s+")
 
@@ -31,8 +31,7 @@ class SqlAdapter:
 
     def fingerprint(self, req: SqlRequest) -> str:
         key = {"args": req.args, "query": _normalize(req.query)}
-        canonical = json.dumps(key, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+        return canonical_fingerprint(key)
 
     def serialize_req(self, req: SqlRequest) -> dict[str, Any]:
         return {"query": req.query, "args": req.args}
