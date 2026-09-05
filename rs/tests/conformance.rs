@@ -58,12 +58,23 @@ fn recompute_unary_fingerprint(adapter: &str, payload: &serde_yaml::Value) -> St
             RedisAdapter.fingerprint(&req).expect("redis fingerprint")
         }
         "http" => {
-            let text = |key: &str| {
-                payload
-                    .get(key)
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string()
+            // Fail fast on malformed fixtures: a missing or non-string
+            // method/url must not silently recompute from "".
+            let text = |key: &str| -> String {
+                match payload.get(key) {
+                    Some(v) => v
+                        .as_str()
+                        .unwrap_or_else(|| panic!("http fixture: `{key}` must be a string"))
+                        .to_string(),
+                    None => panic!("http fixture: `{key}` is required"),
+                }
+            };
+            let body = match payload.get("body") {
+                Some(v) => v
+                    .as_str()
+                    .unwrap_or_else(|| panic!("http fixture: `body` must be a string"))
+                    .to_string(),
+                None => String::new(),
             };
             let headers: HashMap<String, String> = payload
                 .get("headers")
@@ -74,7 +85,7 @@ fn recompute_unary_fingerprint(adapter: &str, payload: &serde_yaml::Value) -> St
                 method: text("method"),
                 url: text("url"),
                 headers,
-                body: text("body").into_bytes(),
+                body: body.into_bytes(),
             };
             HttpAdapter.fingerprint(&req).expect("http fingerprint")
         }
