@@ -1,0 +1,8 @@
+xrr: "1"
+adapter: fs
+fingerprint: "99ac690f"
+recorded_at: "2026-09-05T00:00:00Z"
+payload:
+  op: rename
+  path: "$TMP/esc/amp=&,lt=<,gt=>,eacute=é,ls=\u2028,ps=\u2029,bs=\b,ff=\f,us=\x1f,del=\x7f.txt"
+  dest: "$TMP/esc/renamed/amp=&,lt=<,gt=>,eacute=é,ls=\u2028,ps=\u2029,bs=\b,ff=\f,us=\x1f,del=\x7f.txt"

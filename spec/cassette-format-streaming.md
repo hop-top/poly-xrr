@@ -665,11 +665,15 @@ Keys are shown in their sorted order; canonical JSON has no whitespace.
 Service and method names are proto identifiers (`[A-Za-z0-9_.]`), so JSON
 string escaping never varies between ports.
 
-Identity values outside that alphabet (URL-keyed identities above all) MUST
-use standard JSON string escaping only. Implementations MUST NOT apply
-HTML-safe escaping (`&`, `<`, `>` emitted as `\u0026`, `\u003c`, `\u003e`):
-the two conventions produce different canonical bytes and therefore fork
-fingerprints across ports.
+Identity values outside that alphabet (URL-keyed identities above all)
+MUST be serialized per
+[RFC 8785 §3.2.2.2](https://www.rfc-editor.org/rfc/rfc8785#section-3.2.2.2)
+exactly as cassette-format-v1.md "Canonical JSON" specifies: no HTML-safe
+escaping (`&` as `\u0026`), no `\u`-escaping of non-ASCII, U+007F or
+U+2028/U+2029, `/` unescaped. Any other convention produces different
+canonical bytes and forks fingerprints across ports. The v1 hazard string
+`H` (`a&b<c>/é` + U+2028 U+2029 U+0008 U+000C U+001F U+007F) pins the
+streaming core too — see the last test-vector row below.
 
 Because every input set includes `"stream"`, streaming canonical inputs
 are disjoint from unary ones by construction. The fingerprints themselves
@@ -688,6 +692,7 @@ these hold for any codec and match the `spec/fixtures/` cassettes exactly:
 | server | `files.FileService/Download`, message `{"path":"/var/log/big.log"}` (msg_hash `164658bd`) | `{"method":"Download","msg_hash":"164658bd","service":"files.FileService","stream":"server"}` | `9e8c4d4c` |
 | client | `files.FileService/Upload`, n=0 | `{"method":"Upload","n":0,"service":"files.FileService","stream":"client"}` | `2bebfd6f` |
 | bidi | `chat.ChatService/Converse`, n=0 | `{"method":"Converse","n":0,"service":"chat.ChatService","stream":"bidi"}` | `c6233d2e` |
+| server (hazard) | identity `{"k": H}`, no counter — `H` from v1 "Canonical JSON" | `{"k":"…","stream":"server"}`, UTF-8 hex `7b226b223a226126623c633e2fc3a9e280a8e280a95c625c665c75303031667f222c2273747265616d223a22736572766572227d` | `bcc2c6c3` |
 
 ## Worked Example: Server-Stream
 
@@ -951,6 +956,16 @@ live/e2e tests against an actual gRPC runtime, not by these fixtures.
 
 All ports MUST replay fixture cassettes regardless of which port recorded
 them — the v1 cross-runtime guarantee extends to streams unchanged.
+
+**Cross-port re-emission.** The lossless re-emit obligation above is
+self-load only when a port reads back its own output, so an emit defect
+the port's own reader tolerates never fails it. Each port therefore checks
+in its re-emission of every streamed fixture pair under
+`spec/emitted/<port>/` (see that directory's README), and every port MUST
+load every port's tree — its own included — to a model field-for-field
+equal to the golden pair, under the same equality rule as the round-trip
+(decoded bytes; encoding choice free). A port's tree MUST equal what its
+writer emits at that revision; the port's own suite pins it.
 
 ### Scrub Hook Obligations — Identity-Hook Matrix
 

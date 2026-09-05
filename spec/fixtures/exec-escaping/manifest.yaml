@@ -1,0 +1,5 @@
+interactions:
+  - adapter: exec
+    fingerprint: "dc933bd1"
+    verify_fingerprint: true
+    description: "argv and stdin carry every JSON string-escaping hazard class; env is round-trip only"

@@ -49,7 +49,7 @@ $resp2 = $session2->record($adapter, $req, fn() => null);
 
 - php-vcr: stream wrapper + global interception; xrr: explicit call-site wrapping
 - php-vcr: PHP-specific cassette format; xrr: language-agnostic YAML
-- php-vcr: HTTP only; xrr: HTTP + exec + Redis + SQL
+- php-vcr: HTTP only; xrr: HTTP + exec + Redis + SQL + fs
 - php-vcr: minimal maintenance; xrr: actively maintained across 5 languages
 
 ---

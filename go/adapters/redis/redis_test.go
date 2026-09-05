@@ -32,3 +32,10 @@ func TestRedisAdapterRoundtrip(t *testing.T) {
 	assert.Equal(t, req.Command, got.Command)
 	assert.Equal(t, req.Args, got.Args)
 }
+
+// "GET a&b<c>/é" under RFC 8785 escaping — no HTML-safe escapes, é raw.
+func TestFingerprintNoHTMLEscape(t *testing.T) {
+	fp, err := xredis.NewAdapter().Fingerprint(&xredis.Request{Command: "get", Args: []string{"a&b<c>/é"}})
+	require.NoError(t, err)
+	assert.Equal(t, "25f2532e", fp)
+}

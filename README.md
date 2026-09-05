@@ -54,13 +54,14 @@ resp2, err := s2.Record(ctx, adapter, req, do)
 
 ## Adapters
 
-| ID    | Intercepts           | Fingerprint fields                         | Ports         |
-|-------|----------------------|--------------------------------------------|---------------|
-| exec  | shell commands       | argv + stdin                               | all¹          |
-| http  | HTTP requests        | method + path+query + sha256(body)[:8]     | all           |
-| grpc  | gRPC calls + streams²| service + method + sha256(proto-bytes)[:8] | go, php³      |
-| redis | Redis commands       | command + args                             | all           |
-| sql   | SQL queries          | normalized query + args                    | all           |
+| ID    | Intercepts           | Fingerprint fields                                  | Ports         |
+|-------|----------------------|-----------------------------------------------------|---------------|
+| exec  | shell commands       | argv + stdin                                        | all¹          |
+| http  | HTTP requests        | method + path+query + sha256(body)[:8]              | all           |
+| grpc  | gRPC calls + streams²| service + method + sha256(proto-bytes)[:8]          | go, php³      |
+| redis | Redis commands       | command + args                                      | all           |
+| sql   | SQL queries          | normalized query + args                             | all           |
+| fs    | filesystem mutations | op + path + sha256(data) + presence-gated optionals | all⁴          |
 
 ¹ The Go port additionally hashes `cwd` into the exec fingerprint when
 non-empty — a backward-compatible extension for per-directory isolation
@@ -71,6 +72,12 @@ stream-specific fingerprints — see "Streaming (gRPC)" below.
 
 ³ The PHP adapter covers streamed RPCs only; unary calls pass through to
 the stock client. See "Streaming (gRPC)" for its seam and runtime caveats.
+
+⁴ Optional fields (`mode`, `uid`/`gid`, `dest`, `size`, `flags`,
+`recursive`) enter the fingerprint only when set. Every port exposes a
+path-normalizer hook applied to `path` and `dest` before fingerprinting.
+Contract: [spec/cassette-format-v1.md,
+"fs Adapter (v1)"](spec/cassette-format-v1.md#fs-adapter-v1).
 
 ### Exec adapter: per-directory isolation (Go-only extension)
 

@@ -1,0 +1,21 @@
+xrr: "1"
+adapter: exec
+fingerprint: "dc933bd1"
+recorded_at: "2026-09-05T00:00:00Z"
+payload:
+  argv:
+    - echo
+    - "amp=&"
+    - "lt=<"
+    - "gt=>"
+    - "slash=/"
+    - "eacute=é"
+    - "ls=\u2028"
+    - "ps=\u2029"
+    - "bs=\b"
+    - "ff=\f"
+    - "us=\x1f"
+    - "del=\x7f"
+  stdin: "&<>/é\u2028\u2029\b\f\x1f\x7f\n"
+  env:
+    HAZARD: "&<>/é\u2028\u2029\b\f\x1f\x7f"

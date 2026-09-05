@@ -1,5 +1,9 @@
 name: CI
 
+# Cross-port conformance rides each port's own suite: every job below pins
+# its port's re-emission tree (spec/emitted/<port>/) and loads every other
+# port's tree, so no multi-toolchain job is needed. See spec/emitted/README.md.
+
 on:
   push:
     branches: [main]

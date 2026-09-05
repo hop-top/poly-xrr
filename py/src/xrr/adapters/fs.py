@@ -12,9 +12,10 @@ on read). See spec/cassette-format-v1.md "Data Field Encoding".
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any
+
+from ..stream import canonical_fingerprint
 
 # Op constants. Adopters SHOULD use these rather than literal strings.
 OP_WRITE = "write"
@@ -86,16 +87,17 @@ class FsAdapter:
             fields["uid"] = req.uid
         if req.gid is not None:
             fields["gid"] = req.gid
-        if req.dest:
-            fields["dest"] = self._normalize(req.dest)
+        # spec: dest participates only when non-empty AFTER normalization.
+        dest = self._normalize(req.dest)
+        if dest:
+            fields["dest"] = dest
         if req.size is not None:
             fields["size"] = req.size
         if req.flags != 0:
             fields["flags"] = req.flags
         if req.recursive:
             fields["recursive"] = True
-        canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+        return canonical_fingerprint(fields)
 
     def serialize_req(self, req: FsRequest) -> dict[str, Any]:
         # Apply path normalization here so the persisted cassette
@@ -113,8 +115,11 @@ class FsAdapter:
             out["uid"] = req.uid
         if req.gid is not None:
             out["gid"] = req.gid
-        if req.dest:
-            out["dest"] = self.normalize(req.dest)
+        # Same gate as fingerprint(): a dest that normalizes to "" is
+        # omitted, so the stored and hashed forms agree.
+        dest = self.normalize(req.dest)
+        if dest:
+            out["dest"] = dest
         if req.size is not None:
             out["size"] = req.size
         if req.flags != 0:

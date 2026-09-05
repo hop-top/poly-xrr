@@ -1,0 +1,20 @@
+xrr: "1"
+adapter: grpc
+fingerprint: "c6233d2e"
+recorded_at: "2026-08-23T12:00:00Z"
+payload:
+  service: chat.ChatService
+  method: Converse
+  n: 0
+stream:
+  type: bidi
+  frames:
+  - seq: 0
+    message_b64: "cGluZy0x"
+    at_ms: 0
+  - seq: 2
+    message_b64: "cGluZy0y"
+    at_ms: 40
+  half_close:
+    seq: 4
+    at_ms: 45

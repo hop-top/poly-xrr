@@ -1,9 +1,9 @@
 # xrr — top-level Makefile
 #
 # Per-language: test-{go,py,ts,rs,php}, e2e-{go,py,ts,rs,php},
-# lint-{go,py,ts,rs,php}. Aggregated: test-all, e2e-all, lint-all,
-# check-all. Bare `make test` / `make e2e` / `make lint` stay Go-only
-# (canonical implementation).
+# lint-{go,py,ts,rs,php}, emit-{go,py,ts,rs,php}. Aggregated: test-all,
+# e2e-all, lint-all, emit-all, check-all. Bare `make test` / `make e2e` /
+# `make lint` stay Go-only (canonical implementation).
 #
 # Hop worktrees split the git dir from the working tree; suppress VCS
 # stamp errors (same pattern as the other poly- repos).
@@ -13,6 +13,7 @@ export GOFLAGS := -buildvcs=false
         test-go test-py test-ts test-rs test-php test-all \
         e2e-go e2e-py e2e-ts e2e-rs e2e-php e2e-all \
         lint-go lint-py lint-ts lint-rs lint-php lint-all \
+        emit-go emit-py emit-ts emit-rs emit-php emit-all \
         install-ts install-php check-all dist \
         dev-up dev-down dev-exec dev-rebuild dev-status dev-logs
 
@@ -84,6 +85,32 @@ e2e-php:
 lint-php:
 	@[ -d php/vendor ] || $(MAKE) install-php
 	cd php && vendor/bin/phpstan analyse src --level 9 --no-progress
+
+# --- Re-emitted conformance fixtures ---
+#
+# spec/emitted/<port>/ holds each port's own re-emission of every streamed
+# golden pair under spec/fixtures/; every port's suite pins its own tree and
+# loads all of them (see spec/emitted/README.md). Regenerate after changing
+# a port's stream emitter or adding a streamed fixture. emit-all needs all
+# five toolchains: `make dev-exec CMD="make emit-all"` in the devcontainer.
+
+emit-go:
+	cd go && XRR_UPDATE_EMITTED=1 go test -run 'TestConformanceReemissionPinned$$' .
+
+emit-py:
+	cd py && XRR_UPDATE_EMITTED=1 uv run pytest tests/test_conformance.py -k reemission_pinned -q
+
+emit-ts: install-ts
+	cd ts && XRR_UPDATE_EMITTED=1 pnpm vitest run tests/conformance.test.ts -t "re-emission pinned"
+
+emit-rs:
+	cd rs && XRR_UPDATE_EMITTED=1 cargo test --test emit_conformance reemission_pinned
+
+emit-php:
+	@[ -d php/vendor ] || $(MAKE) install-php
+	cd php && XRR_UPDATE_EMITTED=1 vendor/bin/phpunit tests/ConformanceTest.php --filter testReemissionPinned
+
+emit-all: emit-go emit-py emit-ts emit-rs emit-php
 
 # --- Release packaging ---
 

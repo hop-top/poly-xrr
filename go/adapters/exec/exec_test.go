@@ -80,3 +80,12 @@ func TestExecAdapterFingerprint_EmptyCwdBackwardCompat(t *testing.T) {
 	fpRef, _ := a.Fingerprint(&exec.Request{Argv: []string{"gh", "pr", "view", "1"}, Stdin: ""})
 	assert.Equal(t, fpRef, fpNew)
 }
+
+// Cross-port hazard vector (spec: Fingerprint Algorithm). The same argv
+// pins the same fingerprint in every port.
+func TestFingerprintHazardVector(t *testing.T) {
+	hazard := "a&b<c>/é" + string(rune(0x2028)) + string(rune(0x2029)) + "\b\f\x1f\x7f"
+	fp, err := exec.NewAdapter().Fingerprint(&exec.Request{Argv: []string{"echo", hazard}})
+	require.NoError(t, err)
+	assert.Equal(t, "97618387", fp)
+}

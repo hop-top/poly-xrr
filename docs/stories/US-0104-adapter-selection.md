@@ -8,7 +8,7 @@
 ## User Goal
 
 As a Solo Developer, I want a clear adapter for each channel type (exec, HTTP, Redis,
-SQL, gRPC) so I can wrap any interaction without writing fingerprint or serialization
+SQL, gRPC, fs) so I can wrap any interaction without writing fingerprint or serialization
 logic myself.
 
 ---
@@ -22,7 +22,7 @@ in the same session, each fingerprinting its own request type correctly.
 
 ## Acceptance Criteria
 
-- [ ] Each adapter has a stable, documented `id` (`exec`, `http`, `grpc`, `redis`, `sql`).
+- [ ] Each adapter has a stable, documented `id` (`exec`, `http`, `grpc`, `redis`, `sql`, `fs`).
 - [ ] Adapter fingerprints are deterministic: same input always produces same fingerprint.
 - [ ] Two adapters can be used in one session without collision (cassette filenames distinct).
 - [ ] Adapter serialize/deserialize round-trips losslessly for all documented request fields.

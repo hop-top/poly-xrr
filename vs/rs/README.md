@@ -54,7 +54,7 @@ let resp2 = rep.record(&adapter, &req, || async { unreachable!() }).await?;
 
 - rVCR: reqwest middleware only; xrr: any HTTP client via closure
 - rVCR: Rust-specific cassette format; xrr: language-agnostic YAML
-- rVCR: HTTP only; xrr: HTTP + exec + Redis + SQL
+- rVCR: HTTP only; xrr: HTTP + exec + Redis + SQL + fs
 - rVCR: requires `reqwest-middleware`; xrr: no client dependency
 
 ---

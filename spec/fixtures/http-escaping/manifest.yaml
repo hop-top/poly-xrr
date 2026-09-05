@@ -1,0 +1,5 @@
+interactions:
+  - adapter: http
+    fingerprint: "1dda8e8b"
+    verify_fingerprint: true
+    description: "query carries & and / (the URL-safe hazards); body hazards pin body_hash byte fidelity; header is round-trip only"

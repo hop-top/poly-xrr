@@ -2,11 +2,10 @@ package grpc
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
-	xrr "hop.top/xrr"
 	"gopkg.in/yaml.v3"
+	xrr "hop.top/xrr"
 )
 
 // Request represents a gRPC interaction request.
@@ -40,7 +39,7 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 		return "", fmt.Errorf("grpc: unexpected request type %T", req)
 	}
 	msgHash := sha256.Sum256(r.Message)
-	canonical, err := json.Marshal(map[string]any{
+	fp, err := xrr.CanonicalFingerprint(map[string]any{
 		"service":  r.Service,
 		"method":   r.Method,
 		"msg_hash": fmt.Sprintf("%x", msgHash[:4]),
@@ -48,9 +47,8 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("grpc: fingerprint marshal: %w", err)
 	}
-	sum := sha256.Sum256(canonical)
-	return fmt.Sprintf("%x", sum[:4]), nil
+	return fp, nil
 }
 
-func (a *Adapter) Serialize(v any) ([]byte, error)          { return yaml.Marshal(v) }
+func (a *Adapter) Serialize(v any) ([]byte, error)           { return yaml.Marshal(v) }
 func (a *Adapter) Deserialize(data []byte, target any) error { return yaml.Unmarshal(data, target) }

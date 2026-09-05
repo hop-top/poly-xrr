@@ -2,12 +2,11 @@ package http
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/url"
 
-	xrr "hop.top/xrr"
 	"gopkg.in/yaml.v3"
+	xrr "hop.top/xrr"
 )
 
 // Request represents an HTTP interaction request.
@@ -51,7 +50,7 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 		pathQuery += "?" + u.RawQuery
 	}
 	bodyHash := sha256.Sum256([]byte(r.Body))
-	canonical, err := json.Marshal(map[string]any{
+	fp, err := xrr.CanonicalFingerprint(map[string]any{
 		"method":    r.Method,
 		"path":      pathQuery,
 		"body_hash": fmt.Sprintf("%x", bodyHash[:4]),
@@ -59,9 +58,8 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("http: fingerprint marshal: %w", err)
 	}
-	sum := sha256.Sum256(canonical)
-	return fmt.Sprintf("%x", sum[:4]), nil
+	return fp, nil
 }
 
-func (a *Adapter) Serialize(v any) ([]byte, error)          { return yaml.Marshal(v) }
+func (a *Adapter) Serialize(v any) ([]byte, error)           { return yaml.Marshal(v) }
 func (a *Adapter) Deserialize(data []byte, target any) error { return yaml.Unmarshal(data, target) }

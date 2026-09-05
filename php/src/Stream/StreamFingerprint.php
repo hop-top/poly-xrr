@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace HopTop\Xrr\Stream;
 
+use HopTop\Xrr\CanonicalJson;
+
 /**
  * Streaming fingerprint core (cassette-format-streaming.md).
  *
@@ -23,7 +25,7 @@ namespace HopTop\Xrr\Stream;
  */
 class StreamFingerprint
 {
-    private const JSON_FLAGS = JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR;
+    private const JSON_FLAGS = CanonicalJson::FLAGS;
 
     /** v1 building block: `sha256(message_bytes)[:8]`. */
     public static function msgHash(string $messageBytes): string

@@ -9,7 +9,6 @@ package fs
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -71,8 +70,10 @@ type Response struct {
 func (r *Response) AdapterID() string { return "fs" }
 
 // PathNormalizer rewrites a path before it enters the fingerprint.
-// Default is identity. Returning "" is allowed (treated literally —
-// adopters can drop path info if they really want to).
+// Default is identity. Returning "" is allowed: Path is stored
+// literally (adopters can drop path info if they really want to),
+// while a Dest that normalizes to "" drops out of the fingerprint,
+// since the spec gates dest on being non-empty after normalization.
 //
 // To honor the spec's "cassettes store post-normalizer paths"
 // contract, WRAPPERS must apply the normalizer to Request.Path and
@@ -142,13 +143,13 @@ func (a *Adapter) ID() string { return "fs" }
 //     fingerprint — keeps the 8-char filename suffix bounded for any
 //     payload size.
 //   - Mode/UID/GID/Size pointers are included iff non-nil.
-//   - dest is included iff non-empty (path-normalized).
+//   - dest is included iff non-empty after path normalization.
 //   - flags is included iff non-zero.
 //   - recursive is included iff true.
 //
-// Go's encoding/json sorts map keys lexicographically on marshal, so
-// the same field set always serializes to the same bytes. Other-
-// language ports MUST sort keys identically.
+// xrr.CanonicalJSON sorts map keys lexicographically and applies the
+// spec's RFC 8785 string escaping, so the same field set serializes to
+// the same bytes in every port.
 func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	r, ok := req.(*Request)
 	if !ok {
@@ -171,8 +172,9 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	if r.GID != nil {
 		fields["gid"] = *r.GID
 	}
-	if r.Dest != "" {
-		fields["dest"] = a.normalize(r.Dest)
+	// spec: dest participates only when non-empty AFTER normalization.
+	if d := a.normalize(r.Dest); d != "" {
+		fields["dest"] = d
 	}
 	if r.Size != nil {
 		fields["size"] = *r.Size
@@ -183,12 +185,11 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	if r.Recursive {
 		fields["recursive"] = true
 	}
-	canonical, err := json.Marshal(fields)
+	fp, err := xrr.CanonicalFingerprint(fields)
 	if err != nil {
 		return "", fmt.Errorf("fs: fingerprint marshal: %w", err)
 	}
-	sum := sha256.Sum256(canonical)
-	return fmt.Sprintf("%x", sum[:4]), nil
+	return fp, nil
 }
 
 // Serialize marshals v as YAML.

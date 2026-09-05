@@ -38,3 +38,11 @@ func TestHTTPAdapterRoundtrip(t *testing.T) {
 	assert.Equal(t, req.Method, got.Method)
 	assert.Equal(t, req.Body, got.Body)
 }
+
+// {"body_hash":"e3b0c442","method":"GET","path":"/p?q=a&b<c>"} under RFC
+// 8785 escaping — no HTML-safe escapes in the query string.
+func TestFingerprintNoHTMLEscape(t *testing.T) {
+	fp, err := xhttp.NewAdapter().Fingerprint(&xhttp.Request{Method: "GET", URL: "https://h/p?q=a&b<c>"})
+	require.NoError(t, err)
+	assert.Equal(t, "54e90fb9", fp)
+}

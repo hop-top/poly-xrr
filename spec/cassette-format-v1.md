@@ -13,7 +13,7 @@ Spec for the xrr on-disk cassette format. Language-agnostic; all ports MUST conf
 ## Adapter ID Rules
 
 - Pattern: `[a-z][a-z0-9-]*`
-- Examples: `exec`, `http`, `grpc`, `redis`, `sql`
+- Examples: `exec`, `http`, `grpc`, `redis`, `sql`, `fs`
 
 ## Fingerprint Algorithm
 
@@ -25,6 +25,62 @@ Where `canonical(request)` = deterministic JSON with sorted keys of the fields
 that uniquely identify the interaction (adapter-defined).
 
 Result: 8 lowercase hex characters, e.g. `a3f9c1b2`.
+
+### Canonical JSON
+
+`canonical(...)` is, for every adapter in every port:
+
+- a JSON object whose keys are sorted lexicographically by code point
+  (all v1 fingerprint keys are ASCII identifiers, so the ordering is
+  unambiguous);
+- no insignificant whitespace — `,` and `:` only;
+- string values serialized per
+  [RFC 8785 §3.2.2.2](https://www.rfc-editor.org/rfc/rfc8785#section-3.2.2.2)
+  (JSON Canonicalization Scheme): only `"`, `\` and U+0000–U+001F are
+  escaped — `\b \t \n \f \r` as their short forms, the rest as lowercase
+  `\u00xx`. Every other code point is emitted as raw UTF-8: `&`, `<`, `>`,
+  `/`, non-ASCII, U+007F and U+2028/U+2029 included. This is exactly what
+  ECMAScript `JSON.stringify` produces.
+
+Implementations MUST NOT apply HTML-safe escaping (`&` as `\u0026`, `<`
+as `\u003c`, `>` as `\u003e`), MUST NOT `\u`-escape non-ASCII, U+007F or
+U+2028/U+2029, and MUST NOT escape `/`. Each of those conventions is
+valid JSON, but each yields different canonical bytes and therefore a
+different fingerprint — a cassette recorded in one port then misses in
+another. Encoder settings known to be required: Go `encoding/json` needs
+`SetEscapeHTML(false)` plus a post-pass restoring raw U+2028/U+2029;
+Python `json.dumps` needs `ensure_ascii=False`; PHP `json_encode` needs
+`JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE |
+JSON_UNESCAPED_LINE_TERMINATORS`. `JSON.stringify` and `serde_json`
+conform as-is.
+
+Number formatting is NOT pinned by this version. Ports agree on
+integers; non-integer and large-magnitude numbers (`1e21` vs `1e+21` vs
+`1.0e+21`) still differ between encoders, so fingerprint inputs SHOULD
+be strings and integers until RFC 8785 §3.2.2.3 is adopted.
+
+Compatibility: cassettes recorded before this clarification by a port
+whose encoder deviated carry a different fingerprint and MUST be
+re-recorded — Go when a fingerprinted field contains `&`, `<` or `>`;
+Python when it contains non-ASCII or U+007F; PHP when it contains
+non-ASCII. ASCII-only inputs are unaffected.
+
+**Hazard vector** (verifiable byte-for-byte; covers every escaping class
+above). Let `H` be the string `a&b<c>/é` followed by U+2028, U+2029,
+U+0008, U+000C, U+001F and U+007F — as UTF-8:
+`61 26 62 3c 63 3e 2f c3 a9 e2 80 a8 e2 80 a9 08 0c 1f 7f`.
+Canonical JSON serializes `H` as `a&b<c>/é`, the two separators raw,
+`\b`, `\f`, the six-character escape of U+001F, then U+007F raw — as
+UTF-8 hex `6126623c633e2fc3a9e280a8e280a95c625c665c75303031667f`.
+
+| Adapter | Inputs | Canonical JSON (UTF-8 hex) | Fingerprint |
+|---------|--------|----------------------------|-------------|
+| exec | argv `["echo", H]`, stdin `""` | `7b2261726776223a5b226563686f222c226126623c633e2fc3a9e280a8e280a95c625c665c75303031667f225d2c22737464696e223a22227d` | `97618387` |
+| fs | op `write`, path `H` | `7b226f70223a227772697465222c2270617468223a226126623c633e2fc3a9e280a8e280a95c625c665c75303031667f227d` | `6f2fb087` |
+
+The streaming format pins the same `H` under its own discriminator (see
+cassette-format-streaming.md, Fingerprinting Streamed Interactions).
+Every port's test suite asserts all three fingerprints.
 
 ## File Naming
 
@@ -85,7 +141,8 @@ The v1 canonical exec fingerprint is the sha256 of canonical JSON over
 `{argv, stdin}`, truncated to 8 hex chars. **All ports MUST hash these
 two fields and only these two fields** to preserve the cross-runtime
 replay guarantee: a cassette recorded in any language port MUST replay
-in any other port.
+in any other port. `canonical` is the Canonical JSON defined under
+Fingerprint Algorithm; its hazard vector pins the exec bytes.
 
 `cwd` and `env` MAY appear in the serialized request payload for
 debugging, auditing, or adopter-side use, but they do not participate
@@ -156,7 +213,9 @@ the following fields when present:
 - `flags` — when non-zero.
 - `recursive` — when true.
 
-`canonical(fields)` is JSON with keys sorted lexicographically.
+`canonical(fields)` is the Canonical JSON defined under Fingerprint
+Algorithm — keys sorted lexicographically, RFC 8785 string escaping;
+its hazard vector pins the fs bytes.
 
 ### Path Normalization
 

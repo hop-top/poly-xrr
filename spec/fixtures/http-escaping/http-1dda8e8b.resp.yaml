@@ -1,0 +1,9 @@
+xrr: "1"
+adapter: http
+fingerprint: "1dda8e8b"
+recorded_at: "2026-09-05T00:00:00Z"
+payload:
+  status: 200
+  headers:
+    Content-Type: "application/json; charset=utf-8"
+  body: "{\"hits\":1,\"echo\":\"&<>/é\u2028\u2029\b\f\x1f\x7f\"}"

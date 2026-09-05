@@ -47,7 +47,7 @@ def test_get_users(tmp_path):
 
 - vcrpy: decorator-based, patches `requests`/`httpx` globally; xrr: explicit call-site wrapping
 - vcrpy: Python-specific cassette format; xrr: language-agnostic YAML
-- vcrpy: HTTP only; xrr: HTTP + exec + Redis + SQL in one session
+- vcrpy: HTTP only; xrr: HTTP + exec + Redis + SQL + fs in one session
 - vcrpy: `@vcr.use_cassette` auto-records on first run; xrr: explicit `Mode.RECORD` / `Mode.REPLAY`
 
 ---

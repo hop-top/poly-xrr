@@ -1,0 +1,11 @@
+xrr: "1"
+adapter: grpc
+fingerprint: "ffbc4bac"
+recorded_at: "2026-08-23T12:00:00Z"
+payload:
+    status_code: 0
+stream:
+    frames: []
+    end:
+        seq: 2
+        at_ms: 6

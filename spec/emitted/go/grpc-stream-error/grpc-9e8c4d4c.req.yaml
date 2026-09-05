@@ -1,0 +1,16 @@
+xrr: "1"
+adapter: grpc
+fingerprint: "9e8c4d4c"
+recorded_at: "2026-08-23T12:00:00Z"
+payload:
+    method: Download
+    service: files.FileService
+stream:
+    type: server
+    frames:
+        - seq: 0
+          message_b64: "eyJwYXRoIjoiL3Zhci9sb2cvYmlnLmxvZyJ9"
+          at_ms: 0
+    half_close:
+        seq: 1
+        at_ms: 0

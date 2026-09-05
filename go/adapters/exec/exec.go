@@ -1,12 +1,10 @@
 package exec
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
-	xrr "hop.top/xrr"
 	"gopkg.in/yaml.v3"
+	xrr "hop.top/xrr"
 )
 
 // Request represents an exec interaction request.
@@ -73,12 +71,11 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	if r.Cwd != "" {
 		fields["cwd"] = r.Cwd
 	}
-	canonical, err := json.Marshal(fields)
+	fp, err := xrr.CanonicalFingerprint(fields)
 	if err != nil {
 		return "", fmt.Errorf("exec: fingerprint marshal: %w", err)
 	}
-	sum := sha256.Sum256(canonical)
-	return fmt.Sprintf("%x", sum[:4]), nil // 4 bytes = 8 hex chars
+	return fp, nil
 }
 
 // Serialize marshals v as YAML.

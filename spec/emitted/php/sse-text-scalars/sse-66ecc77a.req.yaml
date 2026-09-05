@@ -1,0 +1,9 @@
+xrr: "1"
+adapter: sse
+fingerprint: "66ecc77a"
+recorded_at: "2026-08-23T12:00:00Z"
+payload:
+  url: 'https://example.test/events'
+stream:
+  type: server
+  frames: []
