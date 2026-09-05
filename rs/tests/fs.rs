@@ -218,7 +218,7 @@ fn normalize_empty_short_circuits() {
 }
 
 #[test]
-fn normalizer_result_is_taken_literally() {
+fn normalizer_mapping_dest_to_empty_drops_it() {
     // Returning "" is allowed. A non-empty dest that normalizes to ""
     // is then empty for fingerprint purposes and drops out, per spec
     // ("dest — when non-empty, after path normalization").
