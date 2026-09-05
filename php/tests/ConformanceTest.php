@@ -180,11 +180,14 @@ class ConformanceTest extends TestCase
                 // Re-emit into a fresh dir, reload, compare field-for-field.
                 $tmp = sys_get_temp_dir() . '/xrr_conf_' . uniqid();
                 mkdir($tmp);
-                $reCassette = new FileCassette($tmp);
-                $reCassette->saveStreamed($pair);
-                $reloaded = $reCassette->loadStreamed($interaction['adapter'], $interaction['fingerprint']);
-
-                $this->assertSameInteraction($pair, $reloaded, "$entry {$interaction['fingerprint']}");
+                try {
+                    $reCassette = new FileCassette($tmp);
+                    $reCassette->saveStreamed($pair);
+                    $reloaded = $reCassette->loadStreamed($interaction['adapter'], $interaction['fingerprint']);
+                    $this->assertSameInteraction($pair, $reloaded, "$entry {$interaction['fingerprint']}");
+                } finally {
+                    $this->removeTree($tmp);
+                }
             }
         }
 
@@ -376,13 +379,17 @@ class ConformanceTest extends TestCase
             $golden = new FileCassette($this->fixturesDir() . '/' . $entry);
             $tmp    = sys_get_temp_dir() . '/xrr_reemit_' . uniqid();
             mkdir($tmp);
-            $cassette = new FileCassette($tmp);
-            foreach ($interactions as $i) {
-                $cassette->saveStreamed($golden->loadStreamed($i['adapter'], $i['fingerprint']));
-                foreach (['req', 'resp'] as $kind) {
-                    $name = "{$i['adapter']}-{$i['fingerprint']}.$kind.yaml";
-                    $files["$entry/$name"] = (string) file_get_contents("$tmp/$name");
+            try {
+                $cassette = new FileCassette($tmp);
+                foreach ($interactions as $i) {
+                    $cassette->saveStreamed($golden->loadStreamed($i['adapter'], $i['fingerprint']));
+                    foreach (['req', 'resp'] as $kind) {
+                        $name = "{$i['adapter']}-{$i['fingerprint']}.$kind.yaml";
+                        $files["$entry/$name"] = (string) file_get_contents("$tmp/$name");
+                    }
                 }
+            } finally {
+                $this->removeTree($tmp);
             }
         }
 

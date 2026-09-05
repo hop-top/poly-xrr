@@ -1,10 +1,10 @@
 """exec adapter — fingerprints on argv + stdin."""
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any
+
+from ..stream import canonical_fingerprint
 
 
 @dataclass
@@ -27,8 +27,7 @@ class ExecAdapter:
 
     def fingerprint(self, req: ExecRequest) -> str:
         key = {"argv": req.argv, "stdin": req.stdin}
-        canonical = json.dumps(key, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+        return canonical_fingerprint(key)
 
     def serialize_req(self, req: ExecRequest) -> dict[str, Any]:
         return {"argv": req.argv, "stdin": req.stdin, "env": req.env}

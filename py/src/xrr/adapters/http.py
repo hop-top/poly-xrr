@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
+
+from ..stream import canonical_fingerprint
 
 
 @dataclass
@@ -33,8 +34,7 @@ class HttpAdapter:
             path_query += "?" + parsed.query
         body_hash = hashlib.sha256(req.body.encode()).hexdigest()[:8]
         key = {"method": req.method, "path": path_query, "body_hash": body_hash}
-        canonical = json.dumps(key, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+        return canonical_fingerprint(key)
 
     def serialize_req(self, req: HttpRequest) -> dict[str, Any]:
         return {
