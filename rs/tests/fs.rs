@@ -342,6 +342,204 @@ fn adapter_is_clone_and_thread_safe() {
     assert_eq!(a.id(), "fs");
 }
 
+// --- serde_yaml wire form ---------------------------------------------------
+//
+// Mirrors TestSerializeRoundtrip / TestSerializeOmitsZeroOptionals /
+// TestSerializeBase64Payload / TestSerializeResponseRoundtrip in Go. The
+// structs carry no PartialEq, so equality is asserted per field and by
+// re-serializing: identical YAML text means nothing was lost either way.
+
+fn assert_req_eq(got: &FsRequest, want: &FsRequest) {
+    assert_eq!(got.op, want.op);
+    assert_eq!(got.path, want.path);
+    assert_eq!(got.data, want.data);
+    assert_eq!(got.mode, want.mode);
+    assert_eq!(got.uid, want.uid);
+    assert_eq!(got.gid, want.gid);
+    assert_eq!(got.dest, want.dest);
+    assert_eq!(got.size, want.size);
+    assert_eq!(got.flags, want.flags);
+    assert_eq!(got.recursive, want.recursive);
+}
+
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+// std has no base64 and the adapter only needs the string to be opaque, so
+// a minimal RFC 4648 codec keeps the test free of extra dev-dependencies.
+fn b64_encode(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n =
+            chunk.iter().fold(0u32, |acc, b| (acc << 8) | u32::from(*b)) << (8 * (3 - chunk.len()));
+        for i in 0..=chunk.len() {
+            out.push(B64[((n >> (18 - 6 * i)) & 63) as usize] as char);
+        }
+        for _ in chunk.len()..3 {
+            out.push('=');
+        }
+    }
+    out
+}
+
+fn b64_decode(s: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    for chunk in s.trim_end_matches('=').as_bytes().chunks(4) {
+        let n = chunk.iter().fold(0u32, |acc, c| {
+            let idx = B64.iter().position(|b| b == c).expect("base64 alphabet");
+            (acc << 6) | idx as u32
+        }) << (6 * (4 - chunk.len()));
+        for i in 0..chunk.len() - 1 {
+            out.push(((n >> (16 - 8 * i)) & 0xff) as u8);
+        }
+    }
+    out
+}
+
+#[test]
+fn request_roundtrips_through_yaml() {
+    let req = FsRequest {
+        op: op::WRITE.into(),
+        path: "/etc/hosts".into(),
+        data: "127.0.0.1 localhost\n".into(),
+        mode: Some(0o644),
+        flags: 0,
+        ..Default::default()
+    };
+    let yaml = serde_yaml::to_string(&req).unwrap();
+    assert!(yaml.contains("mode: 420"), "{yaml}");
+
+    let got: FsRequest = serde_yaml::from_str(&yaml).unwrap();
+    assert_req_eq(&got, &req);
+    assert_eq!(got.mode, Some(0o644), "mode survives the round-trip");
+    assert_eq!(
+        serde_yaml::to_string(&got).unwrap(),
+        yaml,
+        "re-serializing the round-tripped request must reproduce the text"
+    );
+}
+
+#[test]
+fn request_yaml_omits_unset_optionals() {
+    let bare = FsRequest {
+        op: op::WRITE.into(),
+        path: "/x".into(),
+        data: "y".into(),
+        ..Default::default()
+    };
+    let yaml = serde_yaml::to_string(&bare).unwrap();
+    for forbidden in [
+        "dest:",
+        "mode:",
+        "uid:",
+        "gid:",
+        "size:",
+        "flags:",
+        "recursive:",
+    ] {
+        assert!(
+            !yaml.contains(forbidden),
+            "bare write must omit {forbidden:?}: {yaml}"
+        );
+    }
+
+    let no_data = FsRequest {
+        op: op::MKDIR.into(),
+        path: "/d".into(),
+        ..Default::default()
+    };
+    let yaml = serde_yaml::to_string(&no_data).unwrap();
+    assert!(
+        !yaml.contains("data:"),
+        "empty data must be omitted: {yaml}"
+    );
+
+    // Presence-bearing fields stay when set, even to zero.
+    let zero_mode = FsRequest {
+        mode: Some(0),
+        ..bare.clone()
+    };
+    let yaml = serde_yaml::to_string(&zero_mode).unwrap();
+    assert!(yaml.contains("mode: 0"), "Some(0) must emit mode: {yaml}");
+
+    let flagged = FsRequest {
+        flags: 1,
+        recursive: true,
+        ..bare.clone()
+    };
+    let yaml = serde_yaml::to_string(&flagged).unwrap();
+    assert!(yaml.contains("flags: 1"), "{yaml}");
+    assert!(yaml.contains("recursive: true"), "{yaml}");
+
+    // Replay side: a minimal cassette written by another port (keys
+    // omitted, not null) loads with the same defaults it was hashed with.
+    let got: FsRequest = serde_yaml::from_str("op: write\npath: /x\n").unwrap();
+    assert_req_eq(
+        &got,
+        &FsRequest {
+            op: op::WRITE.into(),
+            path: "/x".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(got.mode, None);
+    assert_eq!(got.flags, 0);
+    assert!(!got.recursive);
+}
+
+#[test]
+fn base64_payload_roundtrips_through_yaml() {
+    // Spec "Data Field Encoding": binary callers base64-encode before the
+    // adapter sees `data`; serde_yaml stores the string verbatim (no
+    // !!binary); the caller decodes on the way back.
+    let raw = [0x00u8, 0xff, 0xc3, 0x28, 0x80, 0x01, 0x02, 0x03];
+    let encoded = b64_encode(&raw);
+    assert_eq!(encoded, "AP/DKIABAgM=");
+
+    let req = FsRequest {
+        op: op::WRITE.into(),
+        path: "/bin/x".into(),
+        data: encoded.clone(),
+        ..Default::default()
+    };
+    let yaml = serde_yaml::to_string(&req).unwrap();
+    assert!(yaml.contains(&encoded), "{yaml}");
+    assert!(!yaml.contains("!!binary"), "{yaml}");
+
+    let got: FsRequest = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(got.data, encoded, "base64 string must round-trip exactly");
+    assert_eq!(
+        b64_decode(&got.data),
+        raw,
+        "caller recovers the original bytes"
+    );
+    // Opaque to the fingerprint too: text or base64, only the bytes matter.
+    let a = FsAdapter::new();
+    assert_eq!(a.fingerprint(&got).unwrap(), a.fingerprint(&req).unwrap());
+}
+
+#[test]
+fn response_roundtrips_through_yaml() {
+    let resp = FsResponse {
+        duration_ms: 42,
+        bytes_written: 1024,
+    };
+    let yaml = serde_yaml::to_string(&resp).unwrap();
+    let got: FsResponse = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!(got.duration_ms, 42);
+    assert_eq!(got.bytes_written, 1024);
+    assert_eq!(serde_yaml::to_string(&got).unwrap(), yaml);
+
+    // Zero counters are omitted on the way out ...
+    let yaml = serde_yaml::to_string(&FsResponse::default()).unwrap();
+    assert_eq!(yaml, "{}\n", "all-zero response serializes as an empty map");
+    let got: FsResponse = serde_yaml::from_str(&yaml).unwrap();
+    assert_eq!((got.duration_ms, got.bytes_written), (0, 0));
+
+    // ... and accepted explicitly on the way in (spec failure envelope).
+    let got: FsResponse = serde_yaml::from_str("duration_ms: 0\nbytes_written: 0\n").unwrap();
+    assert_eq!((got.duration_ms, got.bytes_written), (0, 0));
+}
+
 #[test]
 fn spec_fixture_still_loads_and_matches_pin() {
     let fixture =

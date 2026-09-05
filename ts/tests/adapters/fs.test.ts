@@ -1,3 +1,4 @@
+import yaml from "js-yaml";
 import { describe, expect, test } from "vitest";
 import {
   FsAdapter,
@@ -179,6 +180,26 @@ describe("FsAdapter", () => {
     const ser = a.serializeResp(resp);
     const got = a.deserializeResp(ser);
     expect(got).toEqual(resp);
+  });
+
+  test("base64 payload round-trips byte-exact through YAML", async () => {
+    // Spec "Data Field Encoding": binary callers base64-encode before the
+    // adapter sees `data`; the adapter and the YAML layer treat the string
+    // as opaque; the caller decodes on the way back.
+    const a = new FsAdapter();
+    const raw = Buffer.from([0x00, 0xff, 0xc3, 0x28, 0x80, 0x01, 0x02, 0x03]);
+    const encoded = raw.toString("base64");
+    const req: FsRequest = { op: "write", path: "/bin/x", data: encoded };
+
+    const text = yaml.dump(a.serializeReq(req));
+    expect(text).toContain(encoded);
+    expect(text).not.toContain("!!binary");
+
+    const got = a.deserializeReq(yaml.load(text));
+    expect(got.data).toBe(encoded);
+    expect(Buffer.from(got.data ?? "", "base64")).toEqual(raw);
+    // Opaque to the fingerprint too: text or base64, only the bytes matter.
+    expect(await a.fingerprint(got)).toBe(await a.fingerprint(req));
   });
 });
 
