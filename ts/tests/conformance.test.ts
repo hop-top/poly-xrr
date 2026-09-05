@@ -3,6 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 import { describe, expect, test } from "vitest";
+import { ExecAdapter, type ExecRequest } from "../src/adapters/exec.js";
+import { FsAdapter, type FsRequest } from "../src/adapters/fs.js";
+import { HttpAdapter, type HttpRequest } from "../src/adapters/http.js";
+import { RedisAdapter, type RedisRequest } from "../src/adapters/redis.js";
+import { SqlAdapter, type SqlRequest } from "../src/adapters/sql.js";
 import { FileCassette } from "../src/cassette.js";
 import { FileSession } from "../src/session.js";
 import { StreamFormatError, type StreamedInteraction } from "../src/stream.js";
@@ -11,8 +16,20 @@ import { counterStreamFingerprint, serverStreamFingerprint } from "../src/stream
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const fixturesRoot = path.resolve(__dirname, "../../spec/fixtures");
 
+interface ManifestInteraction {
+  adapter: string;
+  fingerprint: string;
+  streamed?: boolean;
+  /**
+   * Marks a unary entry whose fingerprint is a computed value: the walker
+   * rebuilds the adapter's request from the req payload and recomputes it
+   * with the adapter's algorithm.
+   */
+  verify_fingerprint?: boolean;
+}
+
 interface Manifest {
-  interactions: Array<{ adapter: string; fingerprint: string; streamed?: boolean }>;
+  interactions: ManifestInteraction[];
 }
 
 interface GrpcStreamPayload {
@@ -57,6 +74,40 @@ function recomputeGrpcFingerprint(pair: StreamedInteraction): string {
   return counterStreamFingerprint(pair.req.stream.type, payload.service, payload.method, payload.n ?? 0);
 }
 
+/**
+ * Recompute a unary fingerprint from the loaded req payload with the
+ * adapter's own algorithm. Loading alone cannot expose a canonical-JSON
+ * escaping fork — the files load in every port; the derived key is what
+ * differs.
+ */
+async function recomputeUnaryFingerprint(adapter: string, payload: unknown): Promise<string> {
+  switch (adapter) {
+    case "exec":
+      return new ExecAdapter().fingerprint(payload as ExecRequest);
+    case "http":
+      return new HttpAdapter().fingerprint(payload as HttpRequest);
+    case "sql":
+      return new SqlAdapter().fingerprint(payload as SqlRequest);
+    case "fs":
+      return new FsAdapter().fingerprint(payload as FsRequest);
+    case "redis":
+      return new RedisAdapter().fingerprint(payload as RedisRequest);
+    default:
+      throw new Error(`verify_fingerprint: no unary fingerprint model for adapter ${adapter}`);
+  }
+}
+
+/** Loads one unary pair (a miss throws) and verifies a pinned fingerprint. */
+async function conformUnaryPair(
+  cassette: FileCassette,
+  interaction: ManifestInteraction
+): Promise<void> {
+  const { req } = await cassette.load(interaction.adapter, interaction.fingerprint);
+  if (interaction.verify_fingerprint) {
+    expect(await recomputeUnaryFingerprint(interaction.adapter, req)).toBe(interaction.fingerprint);
+  }
+}
+
 describe("conformance fixtures", () => {
   const entries = fs.readdirSync(fixturesRoot, { withFileTypes: true });
   const dirs = entries.filter((e) => e.isDirectory());
@@ -82,9 +133,7 @@ describe("conformance fixtures", () => {
             expect(recomputeGrpcFingerprint(pair)).toBe(interaction.fingerprint);
           }
         } else {
-          await expect(
-            cassette.load(interaction.adapter, interaction.fingerprint)
-          ).resolves.not.toThrow();
+          await conformUnaryPair(cassette, interaction);
         }
       }
     });
@@ -116,9 +165,7 @@ describe("manifest order is irrelevant", () => {
             expect(recomputeGrpcFingerprint(pair)).toBe(interaction.fingerprint);
           }
         } else {
-          await expect(
-            cassette.load(interaction.adapter, interaction.fingerprint)
-          ).resolves.not.toThrow();
+          await conformUnaryPair(cassette, interaction);
         }
       }
     });

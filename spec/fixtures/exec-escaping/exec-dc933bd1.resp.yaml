@@ -1,0 +1,9 @@
+xrr: "1"
+adapter: exec
+fingerprint: "dc933bd1"
+recorded_at: "2026-09-05T00:00:00Z"
+payload:
+  stdout: "amp=& lt=< gt=> slash=/ eacute=é ls=\u2028 ps=\u2029 bs=\b ff=\f us=\x1f del=\x7f\n"
+  stderr: ""
+  exit_code: 0
+  duration_ms: 1

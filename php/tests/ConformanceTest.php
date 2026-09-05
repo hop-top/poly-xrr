@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 namespace HopTop\Xrr\Tests;
 
+use HopTop\Xrr\AdapterInterface;
+use HopTop\Xrr\Adapters\ExecAdapter;
+use HopTop\Xrr\Adapters\FsAdapter;
+use HopTop\Xrr\Adapters\HttpAdapter;
+use HopTop\Xrr\Adapters\RedisAdapter;
+use HopTop\Xrr\Adapters\SqlAdapter;
 use HopTop\Xrr\Exception\MalformedStreamException;
 use HopTop\Xrr\FileCassette;
 use HopTop\Xrr\Stream\OccurrenceCounter;
@@ -44,7 +50,11 @@ class ConformanceTest extends TestCase
      * order-independent and keyed apart so they never interleave into a
      * domain's ascending-n run.
      *
-     * @return list<array{adapter: string, fingerprint: string, streamed: bool}>
+     * `verify_fingerprint` marks a unary entry whose fingerprint is a
+     * computed value: the walker rebuilds the adapter's request from the
+     * req payload and recomputes it with the adapter's algorithm.
+     *
+     * @return list<array{adapter: string, fingerprint: string, streamed: bool, verify_fingerprint: bool}>
      */
     private function manifestInteractions(string $entry): array
     {
@@ -56,9 +66,10 @@ class ConformanceTest extends TestCase
         $interactions = [];
         foreach ($manifest['interactions'] ?? [] as $interaction) {
             $interactions[] = [
-                'adapter'     => $interaction['adapter'],
-                'fingerprint' => $interaction['fingerprint'],
-                'streamed'    => (bool) ($interaction['streamed'] ?? false),
+                'adapter'            => $interaction['adapter'],
+                'fingerprint'        => $interaction['fingerprint'],
+                'streamed'           => (bool) ($interaction['streamed'] ?? false),
+                'verify_fingerprint' => (bool) ($interaction['verify_fingerprint'] ?? false),
             ];
         }
 
@@ -87,6 +98,23 @@ class ConformanceTest extends TestCase
         return $interactions;
     }
 
+    /**
+     * Unary adapter whose fingerprint algorithm the walker can recompute.
+     * Loading alone cannot expose a canonical-JSON escaping fork — the files
+     * load in every port; the derived key is what differs.
+     */
+    private function unaryAdapter(string $id): AdapterInterface
+    {
+        return match ($id) {
+            'exec'  => new ExecAdapter(),
+            'fs'    => new FsAdapter(),
+            'http'  => new HttpAdapter(),
+            'redis' => new RedisAdapter(),
+            'sql'   => new SqlAdapter(),
+            default => $this->fail("verify_fingerprint: no unary fingerprint model for adapter $id"),
+        };
+    }
+
     public function testFixturesDirExists(): void
     {
         $this->assertDirectoryExists($this->fixturesDir());
@@ -109,6 +137,15 @@ class ConformanceTest extends TestCase
                     "missing req for {$interaction['adapter']}/{$interaction['fingerprint']} in $entry");
                 $this->assertArrayHasKey('resp', $data,
                     "missing resp for {$interaction['adapter']}/{$interaction['fingerprint']} in $entry");
+
+                if ($interaction['verify_fingerprint']) {
+                    $adapter = $this->unaryAdapter($interaction['adapter']);
+                    $this->assertSame(
+                        $interaction['fingerprint'],
+                        $adapter->fingerprint($adapter->deserializeReq($data['req'])),
+                        "unary fingerprint recomputation mismatch for {$interaction['adapter']} in $entry"
+                    );
+                }
             }
         }
 

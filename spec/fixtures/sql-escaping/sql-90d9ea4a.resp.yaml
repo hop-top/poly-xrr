@@ -1,0 +1,9 @@
+xrr: "1"
+adapter: sql
+fingerprint: "90d9ea4a"
+recorded_at: "2026-09-05T00:00:00Z"
+payload:
+  rows:
+    - id: 1
+      note: "&<>/é\u2028\u2029\b\f\x1f\x7f"
+  affected: 0

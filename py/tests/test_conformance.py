@@ -6,6 +6,11 @@ from pathlib import Path
 import pytest
 import yaml
 
+from xrr.adapters.exec import ExecAdapter
+from xrr.adapters.fs import FsAdapter
+from xrr.adapters.http import HttpAdapter
+from xrr.adapters.redis import RedisAdapter
+from xrr.adapters.sql import SqlAdapter
 from xrr.cassette import FileCassette
 from xrr.session import REPLAY, Session
 from xrr.stream import (
@@ -17,6 +22,31 @@ from xrr.stream import (
 
 # Resolve path relative to this file: tests/ -> py/ -> spec/fixtures/
 _FIXTURES_DIR = Path(__file__).resolve().parent.parent.parent / "spec" / "fixtures"
+
+# Unary adapters whose fingerprint algorithm the walker can recompute.
+_UNARY_ADAPTERS = {
+    "exec": ExecAdapter,
+    "fs": FsAdapter,
+    "http": HttpAdapter,
+    "redis": RedisAdapter,
+    "sql": SqlAdapter,
+}
+
+
+def _recompute_unary_fingerprint(adapter: str, payload: dict) -> str:
+    """Recompute a unary fingerprint from the loaded req payload.
+
+    Manifest entries marked ``verify_fingerprint: true`` carry a computed
+    value; rebuilding the adapter's request and running its own algorithm
+    is what exposes a canonical-JSON escaping fork — the files load in
+    every port, the derived key is what differs.
+    """
+    if adapter not in _UNARY_ADAPTERS:
+        raise AssertionError(
+            f"verify_fingerprint: no unary fingerprint model for adapter {adapter!r}"
+        )
+    a = _UNARY_ADAPTERS[adapter]()
+    return a.fingerprint(a.deserialize_req(payload))
 
 
 def _fixture_dirs() -> list[Path]:
@@ -132,6 +162,10 @@ def test_conformance_fixture(fixture_dir: Path, tmp_path):
             req, resp = cassette.load(adapter, fingerprint)
             assert req is not None
             assert resp is not None
+            if item.get("verify_fingerprint", False):
+                assert _recompute_unary_fingerprint(adapter, req) == fingerprint, (
+                    f"unary fingerprint recomputation mismatch: {adapter}/{fingerprint}"
+                )
             continue
 
         pair = cassette.load_stream(adapter, fingerprint)
