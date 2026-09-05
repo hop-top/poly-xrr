@@ -74,9 +74,9 @@ stream-specific fingerprints — see "Streaming (gRPC)" below.
 the stock client. See "Streaming (gRPC)" for its seam and runtime caveats.
 
 ⁴ Optional fields (`mode`, `uid`/`gid`, `dest`, `size`, `flags`,
-`recursive`) enter the fingerprint only when set. A path-normalizer
-hook ships in the Go and Python ports today; ts / rs / php take
-pre-normalized paths. Contract: [spec/cassette-format-v1.md,
+`recursive`) enter the fingerprint only when set. Every port exposes a
+path-normalizer hook applied to `path` and `dest` before fingerprinting.
+Contract: [spec/cassette-format-v1.md,
 "fs Adapter (v1)"](spec/cassette-format-v1.md#fs-adapter-v1).
 
 ### Exec adapter: per-directory isolation (Go-only extension)
