@@ -110,15 +110,30 @@ function recomputeGrpcFingerprint(pair: StreamedInteraction): string {
 async function recomputeUnaryFingerprint(adapter: string, payload: unknown): Promise<string> {
   switch (adapter) {
     case "exec":
-      return new ExecAdapter().fingerprint(payload as ExecRequest);
+      {
+      const a = new ExecAdapter();
+      return a.fingerprint(a.deserializeReq(payload));
+    }
     case "http":
-      return new HttpAdapter().fingerprint(payload as HttpRequest);
+      {
+      const a = new HttpAdapter();
+      return a.fingerprint(a.deserializeReq(payload));
+    }
     case "sql":
-      return new SqlAdapter().fingerprint(payload as SqlRequest);
+      {
+      const a = new SqlAdapter();
+      return a.fingerprint(a.deserializeReq(payload));
+    }
     case "fs":
-      return new FsAdapter().fingerprint(payload as FsRequest);
+      {
+      const a = new FsAdapter();
+      return a.fingerprint(a.deserializeReq(payload));
+    }
     case "redis":
-      return new RedisAdapter().fingerprint(payload as RedisRequest);
+      {
+      const a = new RedisAdapter();
+      return a.fingerprint(a.deserializeReq(payload));
+    }
     default:
       throw new Error(`verify_fingerprint: no unary fingerprint model for adapter ${adapter}`);
   }
