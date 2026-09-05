@@ -47,7 +47,7 @@ fn recompute_unary_fingerprint(adapter: &str, payload: &serde_yaml::Value) -> St
         }
         "fs" => {
             let req: FsRequest = serde_yaml::from_value(payload.clone()).expect("fs req");
-            FsAdapter.fingerprint(&req).expect("fs fingerprint")
+            FsAdapter::new().fingerprint(&req).expect("fs fingerprint")
         }
         "sql" => {
             let req: SqlRequest = serde_yaml::from_value(payload.clone()).expect("sql req");
