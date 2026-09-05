@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { FileCassette } from "../src/cassette.js";
 import { FileSession } from "../src/session.js";
 import { type StreamType, type StreamedInteraction } from "../src/stream.js";
@@ -126,6 +126,40 @@ describe("openStreamRecord", () => {
 
     // Server-stream payload carries no occurrence ordinal.
     expect(pair.req.payload).toEqual({ service: "files.FileService", method: "Download" });
+  });
+
+  // Every timestamp in the pair reads the process clocks — at_ms from
+  // performance.now() since open, recorded_at from Date — so faking those
+  // two yields byte-determined cassettes: the seam byte-comparing tests
+  // rely on.
+  test("at_ms and recorded_at follow the (fake-able) process clocks", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "performance"] });
+    vi.setSystemTime(new Date("2026-01-02T03:04:05.678Z"));
+    try {
+      const dir = tmpDir();
+      const session = new FileSession("record", new FileCassette(dir));
+      const rec = await session.openStreamRecord(
+        grpcStreamOpen("bidi", "chat.ChatService", "Converse")
+      );
+      vi.advanceTimersByTime(1);
+      rec.recordSend(utf8("alpha"));
+      vi.advanceTimersByTime(1);
+      rec.recordHalfClose();
+      vi.advanceTimersByTime(1);
+      rec.recordRecv(utf8("one"));
+      vi.advanceTimersByTime(1);
+      await rec.finish({ status_code: 0 });
+
+      const pair = await new FileCassette(dir).loadStreamed("grpc", rec.fingerprint);
+      expect(pair.req.stream.frames[0].at_ms).toBe(1);
+      expect(pair.req.stream.half_close?.at_ms).toBe(2);
+      expect(pair.resp.stream.frames[0].at_ms).toBe(3);
+      expect(pair.resp.stream.end.at_ms).toBe(4);
+      expect(pair.req.recorded_at).toBe("2026-01-02T03:04:05Z");
+      expect(pair.resp.recorded_at).toBe("2026-01-02T03:04:05Z");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("recorded bidi conversation matches the fixture shape", async () => {

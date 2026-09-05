@@ -16,7 +16,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { FileCassette } from "../src/cassette.js";
 import { FileSession } from "../src/session.js";
 import type { StreamType } from "../src/stream.js";
@@ -112,6 +112,8 @@ function pairBytes(dir: string, fp: string): [string, string] {
 const TYPES: StreamType[] = ["server", "client", "bidi"];
 
 describe("identity-hook scrub conformance", () => {
+  afterEach(() => vi.useRealTimers());
+
   // M1: an installed identity hook is byte-indistinguishable from no hook.
   // Any divergence is a mechanics defect — an extra scrub site, a missed
   // one, or an identity input derived from the wrong bytes.
@@ -123,6 +125,11 @@ describe("identity-hook scrub conformance", () => {
   // agreeing.
   for (const type of TYPES) {
     it(`${type}: identity hook produces the same bytes as no hook`, async () => {
+      // The pair embeds two clock readings — at_ms (monotonic, since open)
+      // and recorded_at (wall clock) — so byte identity holds only when
+      // both recordings observe the same instants. Freeze both clocks: a
+      // scheduling stall inside one recording must not tick its at_ms.
+      vi.useFakeTimers({ toFake: ["Date", "performance"] });
       const bare = tmpDir();
       const hooked = tmpDir();
       const log: ScrubCall[] = [];
