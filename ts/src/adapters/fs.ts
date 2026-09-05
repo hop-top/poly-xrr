@@ -56,7 +56,9 @@ export interface FsResponse {
 /**
  * Rewrites a path before it enters the fingerprint or the cassette
  * payload. Applies to `path` and `dest` only — never to `data`.
- * Returning "" is allowed and stored literally.
+ * Returning "" is allowed and stored literally; a `dest` that
+ * normalizes to "" drops out of the fingerprint, since the spec gates
+ * `dest` on being non-empty after normalization.
  */
 export type PathNormalizer = (path: string) => string;
 
@@ -124,8 +126,10 @@ export class FsAdapter implements Adapter<FsRequest, FsResponse> {
     if (req.gid !== undefined) {
       fields.gid = req.gid;
     }
-    if (req.dest !== undefined && req.dest !== "") {
-      fields.dest = this.normalize(req.dest);
+    // spec: dest participates only when non-empty AFTER normalization.
+    const dest = this.normalize(req.dest ?? "");
+    if (dest !== "") {
+      fields.dest = dest;
     }
     if (req.size !== undefined) {
       fields.size = req.size;

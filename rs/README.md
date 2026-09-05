@@ -12,10 +12,15 @@ cargo add xrr
 ## Usage
 
 ```rust
-let mut sess = Session::new(cassette("fixtures/my-test"));
-let resp = sess.record("http-get-users", &adapter)?;
-sess.close();
+use hop_top_xrr::{FileCassette, Mode, Session};
+
+let sess = Session::new(Mode::Record, FileCassette::new("fixtures/my-test"));
+let resp = sess.record(&adapter, &req, || do_request())?;
 ```
+
+`Session::record(adapter, req, do_)` fingerprints `req` through `adapter`;
+in `Mode::Record` it runs `do_` and saves the pair, in `Mode::Replay` it
+loads the response from the cassette without calling `do_`.
 
 ### fs adapter: path normalization
 

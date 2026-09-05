@@ -219,8 +219,9 @@ fn normalize_empty_short_circuits() {
 
 #[test]
 fn normalizer_result_is_taken_literally() {
-    // Returning "" is allowed; a non-empty dest that normalizes to ""
-    // still participates (as ""), matching the Go port.
+    // Returning "" is allowed. A non-empty dest that normalizes to ""
+    // is then empty for fingerprint purposes and drops out, per spec
+    // ("dest — when non-empty, after path normalization").
     let blank = FsAdapter::new().with_normalizer(|_p: &str| String::new());
     let with_dest = FsRequest {
         op: op::RENAME.into(),
@@ -233,11 +234,72 @@ fn normalizer_result_is_taken_literally() {
         path: "/a".into(),
         ..Default::default()
     };
-    assert_ne!(
+    assert_eq!(
         blank.fingerprint(&with_dest).unwrap(),
         blank.fingerprint(&no_dest).unwrap()
     );
     assert_eq!(blank.normalize("/anything"), "");
+}
+
+#[test]
+fn dest_gated_on_normalized_value() {
+    // spec: `dest` participates only when non-empty AFTER normalization.
+    let a = FsAdapter::new().with_normalizer(|p: &str| {
+        if p == "/x/drop" {
+            String::new()
+        } else {
+            p.to_string()
+        }
+    });
+    let no_dest = FsRequest {
+        op: op::RENAME.into(),
+        path: "/a".into(),
+        ..Default::default()
+    };
+    let dropped = FsRequest {
+        dest: "/x/drop".into(),
+        ..no_dest.clone()
+    };
+    let kept = FsRequest {
+        dest: "/x/keep".into(),
+        ..no_dest.clone()
+    };
+    assert_eq!(
+        a.fingerprint(&dropped).unwrap(),
+        a.fingerprint(&no_dest).unwrap(),
+        "dest normalized to \"\" must drop out of the fingerprint"
+    );
+    assert_ne!(
+        a.fingerprint(&kept).unwrap(),
+        a.fingerprint(&no_dest).unwrap()
+    );
+    // The persisted copy agrees: serde skips the empty dest.
+    let yaml = serde_yaml::to_string(&a.normalize_request(&dropped)).unwrap();
+    assert!(!yaml.contains("dest"), "{yaml}");
+}
+
+#[test]
+fn empty_dest_stays_omitted_regardless_of_normalizer() {
+    let a = FsAdapter::new().with_normalizer(|p: &str| {
+        if p.is_empty() {
+            "/ghost".to_string()
+        } else {
+            p.to_string()
+        }
+    });
+    let no_dest = FsRequest {
+        op: op::RENAME.into(),
+        path: "/a".into(),
+        ..Default::default()
+    };
+    let empty = FsRequest {
+        dest: String::new(),
+        ..no_dest.clone()
+    };
+    assert_eq!(
+        a.fingerprint(&empty).unwrap(),
+        a.fingerprint(&no_dest).unwrap()
+    );
 }
 
 #[test]
