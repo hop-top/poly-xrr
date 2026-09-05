@@ -58,3 +58,11 @@ but lists no entries (`interactions: []`): the pair is deliberately NOT
 listed, because `interactions` enumerates pairs whose replay must succeed
 and the schema cannot mark an expected rejection. Harnesses target it by
 path. See that dir's README.
+
+## Re-emitted trees
+
+Each port's own re-emission of every streamed pair here is checked in under
+[`../emitted/<port>/`](../emitted/README.md), and every port's suite loads
+all of them back to the golden model. After adding or editing a streamed
+fixture, run `make emit-all` so those trees pick it up; a port whose tree is
+stale fails its own suite with a regenerate hint.

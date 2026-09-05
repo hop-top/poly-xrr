@@ -75,6 +75,8 @@ payload:
 - [ ] All 5 ports pass new fixture without code change.
 - [ ] Fingerprint in `manifest.yaml` matches actual computed fingerprint.
 - [ ] `manifest.yaml` schema validated (required fields present).
+- [ ] Streamed fixture only: `make emit-all` regenerates `spec/emitted/<port>/`
+      for every port; each port's cross-port re-emission test passes.
 
 ---
 

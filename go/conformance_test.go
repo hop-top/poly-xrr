@@ -1,9 +1,12 @@
 package xrr_test
 
 import (
+	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -13,12 +16,60 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var (
+	fixturesRoot = filepath.Join("..", "spec", "fixtures")
+	// emittedRoot holds each port's own re-emission of every streamed
+	// golden pair (spec/emitted/<port>/<fixture>/); see spec/emitted/README.md.
+	emittedRoot = filepath.Join("..", "spec", "emitted")
+)
+
+const thisPort = "go"
+
+type manifestEntry struct {
+	Adapter     string `yaml:"adapter"`
+	Fingerprint string `yaml:"fingerprint"`
+	Streamed    bool   `yaml:"streamed"`
+}
+
 type manifest struct {
-	Interactions []struct {
-		Adapter     string `yaml:"adapter"`
-		Fingerprint string `yaml:"fingerprint"`
-		Streamed    bool   `yaml:"streamed"`
-	} `yaml:"interactions"`
+	Interactions []manifestEntry `yaml:"interactions"`
+}
+
+// fixtureDir is one spec/fixtures dir with its streamed manifest entries.
+type fixtureDir struct {
+	name    string
+	entries []manifestEntry
+}
+
+// streamedFixtureDirs lists, sorted by name, every fixture dir that has at
+// least one streamed manifest entry, with those entries.
+func streamedFixtureDirs(t *testing.T) []fixtureDir {
+	t.Helper()
+	entries, err := os.ReadDir(fixturesRoot)
+	require.NoError(t, err)
+
+	var dirs []fixtureDir
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(fixturesRoot, e.Name(), "manifest.yaml"))
+		require.NoError(t, err, "missing manifest.yaml in %s", e.Name())
+		var m manifest
+		require.NoError(t, yaml.Unmarshal(data, &m))
+
+		d := fixtureDir{name: e.Name()}
+		for _, i := range m.Interactions {
+			if i.Streamed {
+				d.entries = append(d.entries, i)
+			}
+		}
+		if len(d.entries) > 0 {
+			dirs = append(dirs, d)
+		}
+	}
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].name < dirs[j].name })
+	return dirs
 }
 
 // TestConformanceFixtures replays spec/fixtures cassettes — proves Go can read
@@ -215,6 +266,118 @@ func TestConformanceManifestOrderIrrelevant(t *testing.T) {
 				assert.NoError(t, err,
 					"cassette miss under reversed manifest: adapter=%s fp=%s",
 					interaction.Adapter, interaction.Fingerprint)
+			}
+		})
+	}
+}
+
+// reemitStreamedFixtures runs SaveStream over every streamed golden pair and
+// returns the emitted files keyed by their path relative to a port tree
+// (<fixture>/<adapter>-<fp>.<kind>.yaml).
+func reemitStreamedFixtures(t *testing.T) map[string][]byte {
+	t.Helper()
+	files := map[string][]byte{}
+	for _, d := range streamedFixtureDirs(t) {
+		golden := xrr.NewFileCassette(filepath.Join(fixturesRoot, d.name))
+		out := t.TempDir()
+		for _, e := range d.entries {
+			pair, err := golden.LoadStream(e.Adapter, e.Fingerprint)
+			require.NoError(t, err, "%s/%s-%s", d.name, e.Adapter, e.Fingerprint)
+			require.NoError(t, xrr.NewFileCassette(out).SaveStream(e.Adapter, e.Fingerprint, pair))
+			for _, kind := range []string{"req", "resp"} {
+				name := fmt.Sprintf("%s-%s.%s.yaml", e.Adapter, e.Fingerprint, kind)
+				data, err := os.ReadFile(filepath.Join(out, name))
+				require.NoError(t, err)
+				files[filepath.Join(d.name, name)] = data
+			}
+		}
+	}
+	return files
+}
+
+// readTree returns every regular file under root keyed by relative path.
+func readTree(root string) (map[string][]byte, error) {
+	files := map[string][]byte{}
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		files[rel], err = os.ReadFile(path)
+		return err
+	})
+	return files, err
+}
+
+func sortedKeys(m map[string][]byte) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// TestConformanceReemissionPinned — spec/emitted/go must hold exactly what
+// SaveStream emits today for every streamed golden pair, file set and bytes
+// alike. Every port's suite loads that tree (TestConformanceCrossPortReemission
+// and its siblings), so a stale tree would hide a Go emit change from them.
+// XRR_UPDATE_EMITTED=1 regenerates the tree instead of asserting (`make
+// emit-go`).
+func TestConformanceReemissionPinned(t *testing.T) {
+	want := reemitStreamedFixtures(t)
+	tree := filepath.Join(emittedRoot, thisPort)
+
+	if os.Getenv("XRR_UPDATE_EMITTED") != "" {
+		require.NoError(t, os.RemoveAll(tree))
+		for rel, data := range want {
+			path := filepath.Join(tree, rel)
+			require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			require.NoError(t, os.WriteFile(path, data, 0o644))
+		}
+		return
+	}
+
+	got, err := readTree(tree)
+	require.NoError(t, err, "missing %s: regenerate with `make emit-go`", tree)
+	require.Equal(t, sortedKeys(want), sortedKeys(got), "file set drifted: regenerate with `make emit-go`")
+	for rel, data := range want {
+		assert.Equal(t, string(data), string(got[rel]), "%s drifted: regenerate with `make emit-go`", rel)
+	}
+}
+
+// TestConformanceCrossPortReemission — every port's checked-in re-emission
+// of every streamed golden pair must load through Go's strict reader to the
+// same model as the golden pair. Self-load round-trips cannot see an emit
+// slip the emitting port's own reader tolerates; another port's reader can.
+func TestConformanceCrossPortReemission(t *testing.T) {
+	ports, err := os.ReadDir(emittedRoot)
+	require.NoError(t, err, "missing %s: regenerate with `make emit-all`", emittedRoot)
+	require.NotEmpty(t, ports, "no port trees under %s", emittedRoot)
+	dirs := streamedFixtureDirs(t)
+
+	for _, p := range ports {
+		if !p.IsDir() {
+			continue
+		}
+		port := p.Name()
+		t.Run(port, func(t *testing.T) {
+			for _, d := range dirs {
+				t.Run(d.name, func(t *testing.T) {
+					golden := xrr.NewFileCassette(filepath.Join(fixturesRoot, d.name))
+					emitted := xrr.NewFileCassette(filepath.Join(emittedRoot, port, d.name))
+					for _, e := range d.entries {
+						want, err := golden.LoadStream(e.Adapter, e.Fingerprint)
+						require.NoError(t, err)
+						got, err := emitted.LoadStream(e.Adapter, e.Fingerprint)
+						require.NoError(t, err, "%s re-emission of %s-%s: regenerate with `make emit-%s`",
+							port, e.Adapter, e.Fingerprint, port)
+						assertStreamPairEqual(t, want, got)
+					}
+				})
 			}
 		})
 	}

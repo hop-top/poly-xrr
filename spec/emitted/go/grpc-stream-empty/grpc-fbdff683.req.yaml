@@ -1,0 +1,14 @@
+xrr: "1"
+adapter: grpc
+fingerprint: "fbdff683"
+recorded_at: "2026-08-23T12:00:00Z"
+payload:
+    method: Push
+    "n": 0
+    service: telemetry.MetricsService
+stream:
+    type: client
+    frames: []
+    half_close:
+        seq: 0
+        at_ms: 0

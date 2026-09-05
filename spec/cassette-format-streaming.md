@@ -952,6 +952,16 @@ live/e2e tests against an actual gRPC runtime, not by these fixtures.
 All ports MUST replay fixture cassettes regardless of which port recorded
 them — the v1 cross-runtime guarantee extends to streams unchanged.
 
+**Cross-port re-emission.** The lossless re-emit obligation above is
+self-load only when a port reads back its own output, so an emit defect
+the port's own reader tolerates never fails it. Each port therefore checks
+in its re-emission of every streamed fixture pair under
+`spec/emitted/<port>/` (see that directory's README), and every port MUST
+load every port's tree — its own included — to a model field-for-field
+equal to the golden pair, under the same equality rule as the round-trip
+(decoded bytes; encoding choice free). A port's tree MUST equal what its
+writer emits at that revision; the port's own suite pins it.
+
 ### Scrub Hook Obligations — Identity-Hook Matrix
 
 The [Frame Scrub Hook](#frame-scrub-hook) cannot be pinned by fixtures. Its
