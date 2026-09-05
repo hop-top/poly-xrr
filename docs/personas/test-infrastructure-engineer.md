@@ -62,7 +62,7 @@ cross-language integration scenarios.
 
 ### Pluggable adapters
 
-Exec, HTTP, gRPC, Redis, SQL adapters cover most test surface; passthrough mode
+Exec, HTTP, gRPC, Redis, SQL, fs adapters cover most test surface; passthrough mode
 keeps tests runnable against real infra during development.
 
 ### Conformance fixtures

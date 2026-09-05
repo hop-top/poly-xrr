@@ -13,7 +13,7 @@ Spec for the xrr on-disk cassette format. Language-agnostic; all ports MUST conf
 ## Adapter ID Rules
 
 - Pattern: `[a-z][a-z0-9-]*`
-- Examples: `exec`, `http`, `grpc`, `redis`, `sql`
+- Examples: `exec`, `http`, `grpc`, `redis`, `sql`, `fs`
 
 ## Fingerprint Algorithm
 

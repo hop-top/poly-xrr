@@ -14,7 +14,7 @@ Side-by-side migration guides: before (existing OSS package) → after (xrr).
 
 All packages above share at least one of these limitations xrr does not have:
 
-- **HTTP only** — no exec, Redis, SQL, or gRPC in the same session
+- **HTTP only** — no exec, Redis, SQL, gRPC, or fs in the same session
 - **Language-specific cassettes** — cannot replay a Go-recorded cassette in Python
 - **Expectation-based** — hand-write every mock; no real interaction captured
 - **Inactive** — Polly.JS archived 2021; php-vcr minimal maintenance since 2023
