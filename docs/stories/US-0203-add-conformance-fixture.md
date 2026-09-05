@@ -24,6 +24,9 @@ proves the adapter produces compatible cassettes across all languages.
 
 - [ ] Fixture dir created: `spec/fixtures/<adapter>-<scenario>/`.
 - [ ] `manifest.yaml` lists interaction(s) with `adapter`, `fingerprint`, `description`.
+- [ ] Computed fingerprints are marked `verify_fingerprint: true` so every port
+      recomputes them from the payload instead of only loading the pair
+      (see `spec/fixtures/README.md`, "Pinned unary fingerprints").
 - [ ] `.req.yaml` and `.resp.yaml` follow the cassette envelope schema exactly.
 - [ ] All existing conformance tests (`go/conformance_test.go`, etc.) pick up new
       fixture automatically without code change.
@@ -39,6 +42,7 @@ proves the adapter produces compatible cassettes across all languages.
 interactions:
   - adapter: kafka
     fingerprint: "a3f9c1b2"
+    verify_fingerprint: true   // walkers recompute it from the req payload
     description: "produce message to orders topic"
 
 // kafka-a3f9c1b2.req.yaml
@@ -73,7 +77,8 @@ payload:
 
 - [ ] Add fixture dir + files; run `go test ./...` — new fixture auto-discovered.
 - [ ] All 5 ports pass new fixture without code change.
-- [ ] Fingerprint in `manifest.yaml` matches actual computed fingerprint.
+- [ ] Fingerprint in `manifest.yaml` matches actual computed fingerprint
+      (enforced by every walker for entries marked `verify_fingerprint: true`).
 - [ ] `manifest.yaml` schema validated (required fields present).
 
 ---
