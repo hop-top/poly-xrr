@@ -142,9 +142,11 @@ class FsAdapter implements AdapterInterface
         if (isset($req['gid'])) {
             $fields['gid'] = $req['gid'];
         }
+        // spec: dest participates only when non-empty AFTER normalization.
         $dest = $req['dest'] ?? '';
-        if (!empty($dest)) {
-            $fields['dest'] = is_string($dest) ? $this->normalize($dest) : $dest;
+        $dest = is_string($dest) ? $this->normalize($dest) : $dest;
+        if ($dest !== '') {
+            $fields['dest'] = $dest;
         }
         if (isset($req['size'])) {
             $fields['size'] = $req['size'];

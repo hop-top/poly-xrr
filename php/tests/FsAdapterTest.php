@@ -242,6 +242,25 @@ class FsAdapterTest extends TestCase
         $this->assertArrayNotHasKey('dest', $ser);
     }
 
+    public function testDestGatedOnNormalizedValue(): void
+    {
+        // spec: dest participates only when non-empty AFTER normalization.
+        $a      = (new FsAdapter())->withNormalizer(static fn (string $p): string => $p === '/x/drop' ? '' : $p);
+        $noDest = ['op' => 'rename', 'path' => '/a'];
+
+        $this->assertSame($a->fingerprint($noDest), $a->fingerprint($noDest + ['dest' => '/x/drop']),
+            'dest normalized to "" must drop out of the fingerprint');
+        $this->assertNotSame($a->fingerprint($noDest), $a->fingerprint($noDest + ['dest' => '/x/keep']));
+    }
+
+    public function testEmptyDestStaysOmittedRegardlessOfNormalizer(): void
+    {
+        $a      = (new FsAdapter())->withNormalizer(static fn (string $p): string => $p === '' ? '/ghost' : $p);
+        $noDest = ['op' => 'rename', 'path' => '/a'];
+
+        $this->assertSame($a->fingerprint($noDest), $a->fingerprint($noDest + ['dest' => '']));
+    }
+
     public function testChainComposesLeftToRight(): void
     {
         $first  = static fn (string $p): string => $p . '-1';
