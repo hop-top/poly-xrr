@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.0-alpha.6](https://github.com/hop-top/poly-xrr/compare/xrr-ts/v0.1.0-alpha.5...xrr-ts/v0.1.0-alpha.6) (2026-09-05)
+
+
+### Features
+
+* **ts:** fs adapter path normalizer hook ([#46](https://github.com/hop-top/poly-xrr/issues/46)) ([f6d9100](https://github.com/hop-top/poly-xrr/commit/f6d9100ab1e9e98cf173e99dda1122adea8e53e9))
+
+
+### Bug Fixes
+
+* canonicalize fingerprint JSON per RFC 8785 across ports ([791ccc7](https://github.com/hop-top/poly-xrr/commit/791ccc7e3cf792a0dc5c06c179b9a72ad550d509))
+* drive identity-hook stream recordings from an injectable clock ([#58](https://github.com/hop-top/poly-xrr/issues/58)) ([0e7a14f](https://github.com/hop-top/poly-xrr/commit/0e7a14feb2816bd182555d5412911571071800df))
+
 ## [0.1.0-alpha.5](https://github.com/hop-top/poly-xrr/compare/xrr-ts/v0.1.0-alpha.4...xrr-ts/v0.1.0-alpha.5) (2026-08-30)
 
 
