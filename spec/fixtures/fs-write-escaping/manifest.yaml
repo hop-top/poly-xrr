@@ -1,0 +1,5 @@
+interactions:
+  - adapter: fs
+    fingerprint: "48e04780"
+    verify_fingerprint: true
+    description: "path carries every hazard class; data hazards pin data_sha256 byte fidelity"

@@ -1,0 +1,5 @@
+interactions:
+  - adapter: fs
+    fingerprint: "99ac690f"
+    verify_fingerprint: true
+    description: "path and dest both carry every hazard class"

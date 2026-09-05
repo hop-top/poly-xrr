@@ -128,6 +128,37 @@ def test_normalizer_short_circuits_empty_path():
     assert calls == []
 
 
+def test_dest_gated_on_normalized_value():
+    """spec: dest participates only when non-empty AFTER normalization.
+
+    A normalizer mapping a non-empty dest to "" drops it from the
+    fingerprint, so the request hashes identically to one with no dest.
+    The no-dest hash is the cross-port vector
+    sha256('{"op":"rename","path":"/a"}')[:8].
+    """
+    a = FsAdapter().with_normalizer(lambda p: "" if p == "/x/drop" else p)
+    no_dest = FsRequest(op=OP_RENAME, path="/a")
+    dropped = FsRequest(op=OP_RENAME, path="/a", dest="/x/drop")
+    kept = FsRequest(op=OP_RENAME, path="/a", dest="/x/keep")
+    assert a.fingerprint(no_dest) == "86f75341", "cross-port no-dest vector"
+    assert a.fingerprint(dropped) == a.fingerprint(no_dest), (
+        'dest normalized to "" must drop out of the fingerprint'
+    )
+    assert a.fingerprint(kept) != a.fingerprint(no_dest)
+    # Stored form agrees with the hashed form: no dest key at all.
+    assert "dest" not in a.serialize_req(dropped)
+
+
+def test_empty_dest_stays_omitted_regardless_of_normalizer():
+    """An unset dest never reaches the normalizer (normalize short-circuits
+    on ""), so a normalizer that would rewrite "" cannot conjure a dest.
+    """
+    a = FsAdapter().with_normalizer(lambda p: "/ghost" if p == "" else p)
+    no_dest = FsRequest(op=OP_RENAME, path="/a")
+    empty = FsRequest(op=OP_RENAME, path="/a", dest="")
+    assert a.fingerprint(empty) == a.fingerprint(no_dest)
+
+
 # ---------------------------------------------------------------------------
 # Serialize / Deserialize
 # ---------------------------------------------------------------------------

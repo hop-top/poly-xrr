@@ -33,3 +33,11 @@ func TestGRPCAdapterRoundtrip(t *testing.T) {
 	assert.Equal(t, req.Service, got.Service)
 	assert.Equal(t, req.Method, got.Method)
 }
+
+// {"method":"Get<x>","msg_hash":"62c66a7a","service":"a&b.Svc"} under RFC
+// 8785 escaping — no HTML-safe escapes.
+func TestFingerprintNoHTMLEscape(t *testing.T) {
+	fp, err := xgrpc.NewAdapter().Fingerprint(&xgrpc.Request{Service: "a&b.Svc", Method: "Get<x>", Message: []byte("m")})
+	require.NoError(t, err)
+	assert.Equal(t, "19c17430", fp)
+}

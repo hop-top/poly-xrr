@@ -2,9 +2,11 @@ package fs_test
 
 import (
 	"encoding/base64"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	xrr "hop.top/xrr"
 	"hop.top/xrr/adapters/fs"
 
 	"github.com/stretchr/testify/assert"
@@ -93,6 +95,29 @@ type notFsRequest struct{}
 
 func (notFsRequest) AdapterID() string { return "not-fs" }
 
+// TestFingerprintConformanceFsWrite — cross-runtime conformance: the
+// spec/fixtures/fs-write request MUST hash to 667a7680, the value the
+// TypeScript, Python, Rust, and PHP ports each pin. The request is loaded
+// through the cassette rather than hand-built so the fixture bytes are
+// pinned too: a drift in either the fixture or the fingerprint fails here.
+func TestFingerprintConformanceFsWrite(t *testing.T) {
+	dir := filepath.Join("..", "..", "..", "spec", "fixtures", "fs-write")
+	var req fs.Request
+	var resp fs.Response
+	_, err := xrr.NewFileCassette(dir).Load("fs", "667a7680", &req, &resp)
+	require.NoError(t, err)
+
+	assert.Equal(t, fs.OpWrite, req.Op)
+	assert.Equal(t, "$TMP/greeting.txt", req.Path)
+	assert.Equal(t, "hello, world\n", req.Data)
+	require.NotNil(t, req.Mode)
+	assert.Equal(t, uint32(420), *req.Mode) // 0o644
+
+	fp, err := fs.NewAdapter().Fingerprint(&req)
+	require.NoError(t, err)
+	assert.Equal(t, "667a7680", fp, "spec conformance fingerprint mismatch")
+}
+
 // Task 3: PathNormalizer tests.
 
 func TestNormalizerAppliedToFingerprint(t *testing.T) {
@@ -158,6 +183,61 @@ func TestNormalizerEmptyPathPassesThrough(t *testing.T) {
 	_, err := a.Fingerprint(&fs.Request{Op: fs.OpChmod, Path: "", Mode: &mode})
 	require.NoError(t, err)
 	assert.Equal(t, 0, calls, "empty path must not invoke normalizer")
+}
+
+// TestDestGatedOnNormalizedValue — spec: `dest` participates only
+// when non-empty AFTER path normalization. A normalizer that maps a
+// non-empty dest to "" drops it from the fingerprint, so the request
+// hashes identically to one with no dest at all. The no-dest hash is
+// the cross-port vector sha256(`{"op":"rename","path":"/a"}`)[:8].
+func TestDestGatedOnNormalizedValue(t *testing.T) {
+	a := fs.NewAdapter().WithNormalizer(func(p string) string {
+		if p == "/x/drop" {
+			return ""
+		}
+		return p
+	})
+	noDest := &fs.Request{Op: fs.OpRename, Path: "/a"}
+	dropped := &fs.Request{Op: fs.OpRename, Path: "/a", Dest: "/x/drop"}
+	kept := &fs.Request{Op: fs.OpRename, Path: "/a", Dest: "/x/keep"}
+
+	fpNoDest, err := a.Fingerprint(noDest)
+	require.NoError(t, err)
+	fpDropped, err := a.Fingerprint(dropped)
+	require.NoError(t, err)
+	fpKept, err := a.Fingerprint(kept)
+	require.NoError(t, err)
+
+	assert.Equal(t, "86f75341", fpNoDest, "cross-port no-dest vector")
+	assert.Equal(t, fpNoDest, fpDropped,
+		"dest normalized to \"\" must drop out of the fingerprint")
+	assert.NotEqual(t, fpNoDest, fpKept,
+		"dest that survives normalization must still discriminate")
+
+	// The persisted copy agrees: a wrapper that pre-normalizes Dest
+	// (per the PathNormalizer contract) stores no `dest:` at all.
+	stored := &fs.Request{Op: fs.OpRename, Path: "/a", Dest: a.Normalize("/x/drop")}
+	data, err := a.Serialize(stored)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "dest:")
+}
+
+// TestEmptyDestStaysOmittedRegardlessOfNormalizer — an unset Dest
+// never reaches the normalizer (Normalize short-circuits on ""), so a
+// normalizer that would rewrite "" cannot conjure a dest into the
+// fingerprint.
+func TestEmptyDestStaysOmittedRegardlessOfNormalizer(t *testing.T) {
+	a := fs.NewAdapter().WithNormalizer(func(p string) string {
+		if p == "" {
+			return "/ghost"
+		}
+		return p
+	})
+	fpNoDest, err := a.Fingerprint(&fs.Request{Op: fs.OpRename, Path: "/a"})
+	require.NoError(t, err)
+	fpEmpty, err := a.Fingerprint(&fs.Request{Op: fs.OpRename, Path: "/a", Dest: ""})
+	require.NoError(t, err)
+	assert.Equal(t, fpNoDest, fpEmpty)
 }
 
 // Task 4: Serialize/Deserialize tests.
@@ -269,4 +349,13 @@ func TestSerializeStoresPostNormalizerPath(t *testing.T) {
 	assert.Contains(t, out, "dest: $TMP/new")
 	assert.NotContains(t, out, "/tmp/run-123",
 		"serialized payload must not leak the raw tmpdir path")
+}
+
+// Cross-port hazard vector (spec: Fingerprint Algorithm). The same path
+// pins the same fingerprint in every port.
+func TestFingerprintHazardVector(t *testing.T) {
+	hazard := "a&b<c>/é" + string(rune(0x2028)) + string(rune(0x2029)) + "\b\f\x1f\x7f"
+	fp, err := fs.NewAdapter().Fingerprint(&fs.Request{Op: "write", Path: hazard})
+	require.NoError(t, err)
+	assert.Equal(t, "6f2fb087", fp)
 }

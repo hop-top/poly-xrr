@@ -36,3 +36,11 @@ func TestSQLAdapterRoundtrip(t *testing.T) {
 	require.NoError(t, a.Deserialize(data, &got))
 	assert.Equal(t, req.Query, got.Query)
 }
+
+// {"args":null,"query":"select a&b<c>/é"} under RFC 8785 escaping — no
+// HTML-safe & < >, é raw.
+func TestFingerprintNoHTMLEscape(t *testing.T) {
+	fp, err := xsql.NewAdapter().Fingerprint(&xsql.Request{Query: "SELECT a&b<c>/é"})
+	require.NoError(t, err)
+	assert.Equal(t, "200c6828", fp)
+}
