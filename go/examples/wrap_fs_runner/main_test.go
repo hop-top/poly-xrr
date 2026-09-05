@@ -313,8 +313,9 @@ func TestMainFlowRecordThenReplay(t *testing.T) {
 	assert.Equal(t, before, snapshot(t, cassetteDir), "record→replay must leave no diff")
 }
 
-// TestMainRuns executes the shipped example end to end. main() exits
-// non-zero on any record/replay failure, which fails the package.
+// TestMainRuns executes the shipped example end to end via run(), the
+// error-returning body behind main(), so a failure fails this test
+// instead of exiting the test binary.
 func TestMainRuns(t *testing.T) {
-	assert.NotPanics(t, main)
+	require.NoError(t, run())
 }

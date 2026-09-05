@@ -162,15 +162,23 @@ var _ FS = (*Wrapper)(nil)
 // main demonstrates record-then-replay against a tmpdir, with the
 // canonical PathNormalizer installed.
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run is main's body. It returns instead of exiting so tests can
+// drive the example in-process.
+func run() error {
 	tmp, err := os.MkdirTemp("", "xrr-fs-example-*")
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
 
 	cassetteDir := filepath.Join(tmp, "cassettes")
 	if err := os.MkdirAll(cassetteDir, 0o755); err != nil {
-		log.Fatal(err)
+		return err
 	}
 	target := filepath.Join(tmp, "hello.txt")
 
@@ -183,7 +191,7 @@ func main() {
 		sess := xrr.NewSession(xrr.ModeRecord, xrr.NewFileCassette(cassetteDir))
 		w := NewWrapper(RealFS{}, sess, adapter)
 		if err := w.WriteFile(ctx, target, []byte("hello\n"), 0o644); err != nil {
-			log.Fatalf("record WriteFile: %v", err)
+			return fmt.Errorf("record WriteFile: %w", err)
 		}
 		fmt.Println("recorded:", target)
 	}
@@ -200,10 +208,11 @@ func main() {
 		sess := xrr.NewSession(xrr.ModeReplay, xrr.NewFileCassette(cassetteDir))
 		w := NewWrapper(panickyFS{}, sess, adapter)
 		if err := w.WriteFile(ctx, target, []byte("hello\n"), 0o644); err != nil {
-			log.Fatalf("replay WriteFile: %v", err)
+			return fmt.Errorf("replay WriteFile: %w", err)
 		}
 		fmt.Println("replayed without touching disk")
 	}
+	return nil
 }
 
 // panickyFS panics on any call — used in replay to prove the inner
