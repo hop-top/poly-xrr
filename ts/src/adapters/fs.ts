@@ -11,12 +11,14 @@
  * the field names verbatim, so what you see in code is what you
  * see in the cassette.
  *
- * Path normalization: the TS adapter accepts paths verbatim. The
- * Go adapter ships a PathNormalizer hook because Go is the typical
- * record-side runtime; on replay-side (where TS is most useful),
- * paths arrive already-normalized from the cassette. Adopters that
- * need TS-side recording with normalization can pre-normalize at
- * the caller layer before constructing the request.
+ * Path normalization: the adapter holds a `PathNormalizer` (default
+ * identity) and applies it to `path` and `dest` in both
+ * `fingerprint()` and `serializeReq()`, so what gets hashed and what
+ * gets persisted agree exactly — the "cassettes store post-normalizer
+ * paths" contract in spec/cassette-format-v1.md. Install one with
+ * `new FsAdapter({ normalizer })` or `adapter.withNormalizer(fn)`;
+ * compose rules with `chainNormalizers(...)`. Replay reads the stored
+ * path verbatim: `deserializeReq()` never re-normalizes.
  */
 import { createHash } from "node:crypto";
 import type { Adapter } from "../xrr.js";
@@ -51,6 +53,27 @@ export interface FsResponse {
   bytes_written?: number;
 }
 
+/**
+ * Rewrites a path before it enters the fingerprint or the cassette
+ * payload. Applies to `path` and `dest` only — never to `data`.
+ * Returning "" is allowed and stored literally; a `dest` that
+ * normalizes to "" drops out of the fingerprint, since the spec gates
+ * `dest` on being non-empty after normalization.
+ */
+export type PathNormalizer = (path: string) => string;
+
+export interface FsAdapterOptions {
+  /** Applied to `path` and `dest` before hashing and serializing. Default: identity. */
+  normalizer?: PathNormalizer;
+}
+
+const identity: PathNormalizer = (p) => p;
+
+/** Composes normalizers left to right; with no arguments returns identity. */
+export function chainNormalizers(...normalizers: PathNormalizer[]): PathNormalizer {
+  return (p) => normalizers.reduce((acc, n) => n(acc), p);
+}
+
 function sortedKeys(obj: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(
     Object.keys(obj)
@@ -61,11 +84,33 @@ function sortedKeys(obj: Record<string, unknown>): Record<string, unknown> {
 
 export class FsAdapter implements Adapter<FsRequest, FsResponse> {
   readonly id = "fs";
+  private readonly normalizer: PathNormalizer;
+
+  constructor(options: FsAdapterOptions = {}) {
+    this.normalizer = options.normalizer ?? identity;
+  }
+
+  /** Returns a new adapter with `normalizer` installed; `this` is unchanged. */
+  withNormalizer(normalizer: PathNormalizer): FsAdapter {
+    return new FsAdapter({ normalizer });
+  }
+
+  /**
+   * Applies the installed normalizer. Empty input short-circuits to ""
+   * without invoking it, so callers can pass an optional `dest` through
+   * unconditionally.
+   */
+  normalize(p: string): string {
+    if (p === "") {
+      return "";
+    }
+    return this.normalizer(p);
+  }
 
   async fingerprint(req: FsRequest): Promise<string> {
     const fields: Record<string, unknown> = {
       op: req.op,
-      path: req.path,
+      path: this.normalize(req.path),
     };
     if (req.data !== undefined && req.data !== "") {
       fields.data_sha256 = createHash("sha256")
@@ -81,8 +126,10 @@ export class FsAdapter implements Adapter<FsRequest, FsResponse> {
     if (req.gid !== undefined) {
       fields.gid = req.gid;
     }
-    if (req.dest !== undefined && req.dest !== "") {
-      fields.dest = req.dest;
+    // spec: dest participates only when non-empty AFTER normalization.
+    const dest = this.normalize(req.dest ?? "");
+    if (dest !== "") {
+      fields.dest = dest;
     }
     if (req.size !== undefined) {
       fields.size = req.size;
@@ -97,8 +144,13 @@ export class FsAdapter implements Adapter<FsRequest, FsResponse> {
     return createHash("sha256").update(canonical).digest("hex").slice(0, 8);
   }
 
+  /** Returns a copy of `req` with `path` and `dest` in post-normalizer form. */
   serializeReq(req: FsRequest): unknown {
-    return req;
+    const out: FsRequest = { ...req, path: this.normalize(req.path) };
+    if (req.dest !== undefined) {
+      out.dest = this.normalize(req.dest);
+    }
+    return out;
   }
 
   serializeResp(resp: FsResponse): unknown {

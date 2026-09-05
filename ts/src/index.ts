@@ -58,8 +58,14 @@ export { RedisAdapter } from "./adapters/redis.js";
 export type { RedisRequest, RedisResponse } from "./adapters/redis.js";
 export { SqlAdapter } from "./adapters/sql.js";
 export type { SqlRequest, SqlResponse } from "./adapters/sql.js";
-export { FsAdapter } from "./adapters/fs.js";
-export type { FsOp, FsRequest, FsResponse } from "./adapters/fs.js";
+export { FsAdapter, chainNormalizers } from "./adapters/fs.js";
+export type {
+  FsAdapterOptions,
+  FsOp,
+  FsRequest,
+  FsResponse,
+  PathNormalizer,
+} from "./adapters/fs.js";
 export {
   GrpcAdapterError,
   GrpcStreamAdapter,
