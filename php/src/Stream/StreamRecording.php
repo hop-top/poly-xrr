@@ -5,18 +5,22 @@ declare(strict_types=1);
 namespace HopTop\Xrr\Stream;
 
 use HopTop\Xrr\FileCassette;
+use HopTop\Xrr\MonotonicClock;
+use Psr\Clock\ClockInterface;
 
 /**
  * Accumulates the event log of one live stream and writes the cassette
- * pair at terminal. Events are stamped with at_ms (monotonic milliseconds
- * since open) and sequenced by one per-interaction counter in arrival
- * order. Only {@see finish} persists the pair — a stream that never
- * reaches terminal produces no cassette
- * (cassette-format-streaming.md, Record mode).
+ * pair at terminal. Events are stamped with at_ms (milliseconds since the
+ * clock's reading at open; monotonic under the default clock) and
+ * sequenced by one per-interaction counter in arrival order. Only
+ * {@see finish} persists the pair — a stream that never reaches terminal
+ * produces no cassette (cassette-format-streaming.md, Record mode).
  */
 class StreamRecording
 {
-    private readonly int $openedNs;
+    private readonly ClockInterface $clock;
+
+    private readonly \DateTimeImmutable $opened;
 
     private int $seq = 0;
 
@@ -34,6 +38,10 @@ class StreamRecording
      * @param array<string, mixed> $reqPayload
      * @param ?StreamScrub $scrub frame-level scrub hook; null retains
      *   frames verbatim (cassette-format-streaming.md, REDACTION WARNING)
+     * @param ?ClockInterface $clock source of every timestamp in the pair:
+     *   `at_ms` is the elapsed time between its reading at open and at
+     *   each event, `recorded_at` its reading at finish. Null reads a
+     *   {@see MonotonicClock}.
      */
     public function __construct(
         private readonly FileCassette $cassette,
@@ -41,9 +49,11 @@ class StreamRecording
         private readonly string $fingerprint,
         private readonly StreamType $type,
         private readonly array $reqPayload,
-        private readonly ?StreamScrub $scrub = null
+        private readonly ?StreamScrub $scrub = null,
+        ?ClockInterface $clock = null
     ) {
-        $this->openedNs = (int) hrtime(true);
+        $this->clock  = $clock ?? new MonotonicClock();
+        $this->opened = $this->clock->now();
     }
 
     /** The open-time fingerprint of this interaction. */
@@ -121,6 +131,9 @@ class StreamRecording
         $this->finished = true;
 
         $end = new StreamEvent($this->seq++, $this->elapsedMs());
+        $recordedAt = $this->clock->now()
+            ->setTimezone(new \DateTimeZone('UTC'))
+            ->format('Y-m-d\TH:i:s\Z');
 
         $error = $terminal instanceof \Throwable ? $terminal->getMessage() : $terminal;
         if ($error === '') {
@@ -134,12 +147,20 @@ class StreamRecording
             resp: new RespStream($this->recvs, $end),
             reqPayload: $this->reqPayload,
             respPayload: $respPayload,
-            error: $error
+            error: $error,
+            reqRecordedAt: $recordedAt,
+            respRecordedAt: $recordedAt
         ));
     }
 
     private function elapsedMs(): int
     {
-        return max(0, intdiv((int) hrtime(true) - $this->openedNs, 1_000_000));
+        return max(0, intdiv(self::micros($this->clock->now()) - self::micros($this->opened), 1_000));
+    }
+
+    /** Microseconds since the epoch — the finest resolution a PSR-20 reading carries. */
+    private static function micros(\DateTimeImmutable $at): int
+    {
+        return (int) $at->format('U') * 1_000_000 + (int) $at->format('u');
     }
 }
