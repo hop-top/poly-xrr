@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-alpha.7](https://github.com/hop-top/poly-xrr/compare/xrr-rs/v0.1.0-alpha.6...xrr-rs/v0.1.0-alpha.7) (2026-09-05)
+
+
+### Features
+
+* **rs:** fs adapter path normalizer hook ([#47](https://github.com/hop-top/poly-xrr/issues/47)) ([8555fdc](https://github.com/hop-top/poly-xrr/commit/8555fdc4201aed9be5119912258a00f1716c1240))
+
+
+### Bug Fixes
+
+* canonicalize fingerprint JSON per RFC 8785 across ports ([791ccc7](https://github.com/hop-top/poly-xrr/commit/791ccc7e3cf792a0dc5c06c179b9a72ad550d509))
+
 ## [0.1.0-alpha.6](https://github.com/hop-top/poly-xrr/compare/xrr-rs/v0.1.0-alpha.5...xrr-rs/v0.1.0-alpha.6) (2026-08-30)
 
 
