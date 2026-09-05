@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.1.0-alpha.6](https://github.com/hop-top/poly-xrr/compare/xrr-php/v0.1.0-alpha.5...xrr-php/v0.1.0-alpha.6) (2026-09-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **php:** cassettes whose fingerprinted fields contain non-ASCII characters, or U+2028/U+2029 (stream identities), re-fingerprint under RFC 8785 escaping; re-record them.
+
+### Features
+
+* **php:** fs adapter path normalizer hook ([#48](https://github.com/hop-top/poly-xrr/issues/48)) ([c25f0d6](https://github.com/hop-top/poly-xrr/commit/c25f0d6aa13858308d1fbccd6cf4625557d6cea4))
+
+
+### Bug Fixes
+
+* canonicalize fingerprint JSON per RFC 8785 across ports ([791ccc7](https://github.com/hop-top/poly-xrr/commit/791ccc7e3cf792a0dc5c06c179b9a72ad550d509))
+* drive identity-hook stream recordings from an injectable clock ([#58](https://github.com/hop-top/poly-xrr/issues/58)) ([0e7a14f](https://github.com/hop-top/poly-xrr/commit/0e7a14feb2816bd182555d5412911571071800df))
+* **php:** canonicalize fingerprint JSON per RFC 8785 ([1b7acf8](https://github.com/hop-top/poly-xrr/commit/1b7acf80af8b7a40dcb55cafade08ae929e1cb62))
+
 ## [0.1.0-alpha.5](https://github.com/hop-top/poly-xrr/compare/xrr-php/v0.1.0-alpha.4...xrr-php/v0.1.0-alpha.5) (2026-08-30)
 
 
