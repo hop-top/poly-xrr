@@ -9,7 +9,6 @@ package fs
 
 import (
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 
 	"gopkg.in/yaml.v3"
@@ -146,9 +145,9 @@ func (a *Adapter) ID() string { return "fs" }
 //   - flags is included iff non-zero.
 //   - recursive is included iff true.
 //
-// Go's encoding/json sorts map keys lexicographically on marshal, so
-// the same field set always serializes to the same bytes. Other-
-// language ports MUST sort keys identically.
+// xrr.CanonicalJSON sorts map keys lexicographically and applies the
+// spec's RFC 8785 string escaping, so the same field set serializes to
+// the same bytes in every port.
 func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	r, ok := req.(*Request)
 	if !ok {
@@ -183,12 +182,11 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 	if r.Recursive {
 		fields["recursive"] = true
 	}
-	canonical, err := json.Marshal(fields)
+	fp, err := xrr.CanonicalFingerprint(fields)
 	if err != nil {
 		return "", fmt.Errorf("fs: fingerprint marshal: %w", err)
 	}
-	sum := sha256.Sum256(canonical)
-	return fmt.Sprintf("%x", sum[:4]), nil
+	return fp, nil
 }
 
 // Serialize marshals v as YAML.

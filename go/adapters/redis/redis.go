@@ -1,13 +1,11 @@
 package redis
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"strings"
 
-	xrr "hop.top/xrr"
 	"gopkg.in/yaml.v3"
+	xrr "hop.top/xrr"
 )
 
 // Request represents a Redis interaction request.
@@ -39,13 +37,12 @@ func (a *Adapter) Fingerprint(req xrr.Request) (string, error) {
 		return "", fmt.Errorf("redis: unexpected request type %T", req)
 	}
 	parts := append([]string{strings.ToUpper(r.Command)}, r.Args...)
-	canonical, err := json.Marshal(strings.Join(parts, " "))
+	fp, err := xrr.CanonicalFingerprint(strings.Join(parts, " "))
 	if err != nil {
 		return "", fmt.Errorf("redis: fingerprint marshal: %w", err)
 	}
-	sum := sha256.Sum256(canonical)
-	return fmt.Sprintf("%x", sum[:4]), nil
+	return fp, nil
 }
 
-func (a *Adapter) Serialize(v any) ([]byte, error)          { return yaml.Marshal(v) }
+func (a *Adapter) Serialize(v any) ([]byte, error)           { return yaml.Marshal(v) }
 func (a *Adapter) Deserialize(data []byte, target any) error { return yaml.Unmarshal(data, target) }

@@ -96,11 +96,21 @@ class StreamedPair:
 # ── fingerprinting ───────────────────────────────────────────────────────────
 
 
-def canonical_fingerprint(inputs: dict[str, Any]) -> str:
-    """v1 algorithm: sha256 of canonical JSON (sorted keys, no
-    insignificant whitespace), truncated to 8 lowercase hex chars."""
-    canonical = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(canonical.encode()).hexdigest()[:8]
+def canonical_json(value: Any) -> str:
+    """The spec's canonical JSON: lexicographically sorted keys, no
+    insignificant whitespace and RFC 8785 §3.2.2.2 string escaping — only
+    ``"``, the backslash and U+0000–U+001F are escaped; non-ASCII,
+    U+2028/U+2029 and U+007F are emitted raw (``ensure_ascii=False``; the
+    default would escape them and fork fingerprints from the other ports).
+    Every fingerprint in this package hashes this form."""
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+
+
+def canonical_fingerprint(value: Any) -> str:
+    """v1 algorithm: sha256(canonical_json(value))[:8] as lowercase hex."""
+    return hashlib.sha256(canonical_json(value).encode()).hexdigest()[:8]
 
 
 def msg_hash(message: bytes) -> str:
@@ -152,7 +162,7 @@ def stream_canonical(open: StreamOpen, n: int | None) -> str:
     inputs["stream"] = open.type
     if n is not None:
         inputs["n"] = n
-    return json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+    return canonical_json(inputs)
 
 
 def stream_fingerprint(open: StreamOpen, n: int | None = None) -> str:
