@@ -185,6 +185,61 @@ func TestNormalizerEmptyPathPassesThrough(t *testing.T) {
 	assert.Equal(t, 0, calls, "empty path must not invoke normalizer")
 }
 
+// TestDestGatedOnNormalizedValue — spec: `dest` participates only
+// when non-empty AFTER path normalization. A normalizer that maps a
+// non-empty dest to "" drops it from the fingerprint, so the request
+// hashes identically to one with no dest at all. The no-dest hash is
+// the cross-port vector sha256(`{"op":"rename","path":"/a"}`)[:8].
+func TestDestGatedOnNormalizedValue(t *testing.T) {
+	a := fs.NewAdapter().WithNormalizer(func(p string) string {
+		if p == "/x/drop" {
+			return ""
+		}
+		return p
+	})
+	noDest := &fs.Request{Op: fs.OpRename, Path: "/a"}
+	dropped := &fs.Request{Op: fs.OpRename, Path: "/a", Dest: "/x/drop"}
+	kept := &fs.Request{Op: fs.OpRename, Path: "/a", Dest: "/x/keep"}
+
+	fpNoDest, err := a.Fingerprint(noDest)
+	require.NoError(t, err)
+	fpDropped, err := a.Fingerprint(dropped)
+	require.NoError(t, err)
+	fpKept, err := a.Fingerprint(kept)
+	require.NoError(t, err)
+
+	assert.Equal(t, "86f75341", fpNoDest, "cross-port no-dest vector")
+	assert.Equal(t, fpNoDest, fpDropped,
+		"dest normalized to \"\" must drop out of the fingerprint")
+	assert.NotEqual(t, fpNoDest, fpKept,
+		"dest that survives normalization must still discriminate")
+
+	// The persisted copy agrees: a wrapper that pre-normalizes Dest
+	// (per the PathNormalizer contract) stores no `dest:` at all.
+	stored := &fs.Request{Op: fs.OpRename, Path: "/a", Dest: a.Normalize("/x/drop")}
+	data, err := a.Serialize(stored)
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "dest:")
+}
+
+// TestEmptyDestStaysOmittedRegardlessOfNormalizer — an unset Dest
+// never reaches the normalizer (Normalize short-circuits on ""), so a
+// normalizer that would rewrite "" cannot conjure a dest into the
+// fingerprint.
+func TestEmptyDestStaysOmittedRegardlessOfNormalizer(t *testing.T) {
+	a := fs.NewAdapter().WithNormalizer(func(p string) string {
+		if p == "" {
+			return "/ghost"
+		}
+		return p
+	})
+	fpNoDest, err := a.Fingerprint(&fs.Request{Op: fs.OpRename, Path: "/a"})
+	require.NoError(t, err)
+	fpEmpty, err := a.Fingerprint(&fs.Request{Op: fs.OpRename, Path: "/a", Dest: ""})
+	require.NoError(t, err)
+	assert.Equal(t, fpNoDest, fpEmpty)
+}
+
 // Task 4: Serialize/Deserialize tests.
 
 func TestSerializeRoundtrip(t *testing.T) {
