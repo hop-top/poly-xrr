@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace HopTop\Xrr\Adapters;
 
+use Closure;
 use HopTop\Xrr\AdapterInterface;
 use HopTop\Xrr\CanonicalJson;
 
@@ -36,6 +37,14 @@ use HopTop\Xrr\CanonicalJson;
  * encoding/json over map[string]any. data is included as data_sha256
  * (full hex sha256 of UTF-8 bytes) when non-empty so the 8-char filename
  * suffix stays bounded for any payload size.
+ *
+ * Path normalization: an optional normalizer rewrites `path` and `dest`
+ * before they enter the fingerprint and before the request is serialized
+ * onto the cassette, so what gets hashed and what gets stored agree
+ * (spec: cassettes store post-normalizer paths). Default is identity;
+ * install one via the constructor or withNormalizer(), and compose
+ * several rules with chain(). `data` and every other field are never
+ * touched.
  */
 class FsAdapter implements AdapterInterface
 {
@@ -49,6 +58,64 @@ class FsAdapter implements AdapterInterface
     public const OP_HARDLINK = 'hardlink';
     public const OP_TRUNCATE = 'truncate';
 
+    /** @var Closure(string): string */
+    private Closure $normalizer;
+
+    /** @param (callable(string): string)|null $normalizer Defaults to identity. */
+    public function __construct(?callable $normalizer = null)
+    {
+        $this->normalizer = $normalizer === null
+            ? static fn (string $p): string => $p
+            : $normalizer(...);
+    }
+
+    /**
+     * Returns a copy with the given normalizer installed; the receiver is
+     * left untouched. Use chain() to compose multiple rules.
+     *
+     * @param callable(string): string $normalizer
+     */
+    public function withNormalizer(callable $normalizer): static
+    {
+        $copy             = clone $this;
+        $copy->normalizer = $normalizer(...);
+
+        return $copy;
+    }
+
+    /**
+     * Composes normalizers left to right. An empty chain is identity.
+     *
+     * @param callable(string): string ...$normalizers
+     * @return Closure(string): string
+     */
+    public static function chain(callable ...$normalizers): Closure
+    {
+        return static function (string $p) use ($normalizers): string {
+            foreach ($normalizers as $n) {
+                $p = $n($p);
+            }
+
+            return $p;
+        };
+    }
+
+    /**
+     * Applies the installed normalizer to $p. Wrappers may call this when
+     * building a request so the path handed to the session agrees with
+     * what fingerprint() hashes. Empty input short-circuits without
+     * invoking the normalizer, so optional fields such as `dest` can be
+     * passed through unconditionally.
+     */
+    public function normalize(string $p): string
+    {
+        if ($p === '') {
+            return '';
+        }
+
+        return ($this->normalizer)($p);
+    }
+
     public function getId(): string
     {
         return 'fs';
@@ -57,9 +124,10 @@ class FsAdapter implements AdapterInterface
     public function fingerprint(mixed $req): string
     {
         /** @var array<string, mixed> $req */
+        $path   = $req['path'] ?? '';
         $fields = [
-            'op'   => $req['op']   ?? '',
-            'path' => $req['path'] ?? '',
+            'op'   => $req['op'] ?? '',
+            'path' => is_string($path) ? $this->normalize($path) : $path,
         ];
 
         $data = $req['data'] ?? '';
@@ -75,8 +143,11 @@ class FsAdapter implements AdapterInterface
         if (isset($req['gid'])) {
             $fields['gid'] = $req['gid'];
         }
-        if (!empty($req['dest'])) {
-            $fields['dest'] = $req['dest'];
+        // spec: dest participates only when non-empty AFTER normalization.
+        $dest = $req['dest'] ?? '';
+        $dest = is_string($dest) ? $this->normalize($dest) : $dest;
+        if ($dest !== '') {
+            $fields['dest'] = $dest;
         }
         if (isset($req['size'])) {
             $fields['size'] = $req['size'];
@@ -96,6 +167,15 @@ class FsAdapter implements AdapterInterface
     public function serializeReq(mixed $req): array
     {
         /** @var array<string, mixed> $req */
+        // Persist post-normalizer paths so the cassette payload agrees with
+        // the fingerprint inputs; every other field passes through verbatim.
+        if (isset($req['path']) && is_string($req['path'])) {
+            $req['path'] = $this->normalize($req['path']);
+        }
+        if (isset($req['dest']) && is_string($req['dest'])) {
+            $req['dest'] = $this->normalize($req['dest']);
+        }
+
         return $req;
     }
 
