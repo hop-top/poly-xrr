@@ -183,9 +183,10 @@ func TestRecordWriteFilePersistsToDiskAndCassette(t *testing.T) {
 	}
 }
 
-// TestRecordAllOpsMutateDiskAndNormalizePaths drives all nine ops
-// through RealFS and checks both sides: the disk reflects every
-// mutation, and every envelope stores "$TMP/"-prefixed paths.
+// TestRecordAllOpsMutateDiskAndNormalizePaths drives every op through
+// RealFS — nine ops over ten calls, since Remove and RemoveAll both
+// record as op "remove" — and checks both sides: the disk reflects
+// every mutation, and every envelope stores "$TMP/"-prefixed paths.
 func TestRecordAllOpsMutateDiskAndNormalizePaths(t *testing.T) {
 	ctx := context.Background()
 	base, cassettes := t.TempDir(), t.TempDir()
