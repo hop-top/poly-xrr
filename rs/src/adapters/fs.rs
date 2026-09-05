@@ -223,7 +223,7 @@ impl Adapter for FsAdapter {
     ///   - `data` hashed (full sha256 hex) and included as `data_sha256`
     ///     when non-empty. Raw bytes never enter the fingerprint.
     ///   - `mode`/`uid`/`gid`/`size` included iff `Some`.
-    ///   - `dest` included iff non-empty (path-normalized).
+    ///   - `dest` included iff non-empty after path normalization.
     ///   - `flags` included iff non-zero.
     ///   - `recursive` included iff true.
     ///
@@ -250,8 +250,10 @@ impl Adapter for FsAdapter {
         if let Some(g) = req.gid {
             fields.insert("gid", Value::from(g));
         }
-        if !req.dest.is_empty() {
-            fields.insert("dest", Value::String(self.normalize(&req.dest)));
+        // spec: dest participates only when non-empty AFTER normalization.
+        let dest = self.normalize(&req.dest);
+        if !dest.is_empty() {
+            fields.insert("dest", Value::String(dest));
         }
         if let Some(s) = req.size {
             fields.insert("size", Value::from(s));
