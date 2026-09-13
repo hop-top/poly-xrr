@@ -2,6 +2,8 @@
 
 Generic multi-channel interaction recorder/replayer with a pluggable adapter interface.
 
+> **Status:** Active development. Usable today, with some rough edges as features evolve.
+
 ## What is xrr?
 
 `xrr` records and replays interactions across any channel type (exec, HTTP, gRPC, Redis, SQL, fs).
