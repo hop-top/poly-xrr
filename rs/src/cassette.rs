@@ -105,9 +105,9 @@ impl FileCassette {
         // scrubbed tree is what gets serialized — a secret never reaches
         // the YAML string, let alone the file. Envelope metadata is never
         // scrubbed: the fingerprint in particular must match the filename.
-        let mut tree = serde_yaml::to_value(&env)?;
+        let mut tree = serde_norway::to_value(&env)?;
         let redactor = self.active_redactor();
-        if let serde_yaml::Value::Mapping(map) = &mut tree {
+        if let serde_norway::Value::Mapping(map) = &mut tree {
             for (k, v) in map.iter_mut() {
                 match k.as_str() {
                     Some(key) if !ENVELOPE_META_KEYS.contains(&key) => {
@@ -117,7 +117,7 @@ impl FileCassette {
                 }
             }
         }
-        let data = serde_yaml::to_string(&tree)?;
+        let data = serde_norway::to_string(&tree)?;
         let path = self
             .dir
             .join(format!("{}-{}.{}.yaml", adapter_id, fingerprint, kind));
@@ -185,7 +185,7 @@ impl FileCassette {
         })?;
 
         // Deserialize into raw value map, then extract payload + error.
-        let raw: serde_yaml::Value = serde_yaml::from_str(&data)?;
+        let raw: serde_norway::Value = serde_norway::from_str(&data)?;
         let payload = raw
             .get("payload")
             .ok_or_else(|| {
@@ -199,7 +199,7 @@ impl FileCassette {
             .get("error")
             .and_then(|v| v.as_str())
             .map(String::from);
-        let result: T = serde_yaml::from_value(payload)?;
+        let result: T = serde_norway::from_value(payload)?;
         Ok((result, error))
     }
 }

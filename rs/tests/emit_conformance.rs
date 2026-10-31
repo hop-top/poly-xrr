@@ -51,7 +51,7 @@ fn streamed_fixture_dirs() -> Vec<(String, Vec<Interaction>)> {
                 return None;
             }
             let raw = std::fs::read_to_string(p.join("manifest.yaml")).expect("read manifest");
-            let m: Manifest = serde_yaml::from_str(&raw).expect("parse manifest");
+            let m: Manifest = serde_norway::from_str(&raw).expect("parse manifest");
             let entries: Vec<Interaction> =
                 m.interactions.into_iter().filter(|i| i.streamed).collect();
             (!entries.is_empty()).then(|| (dir_name(&p), entries))

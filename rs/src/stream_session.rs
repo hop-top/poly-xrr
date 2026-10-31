@@ -12,7 +12,7 @@
 use std::time::Instant;
 
 use chrono::Utc;
-use serde_yaml::{Mapping, Value};
+use serde_norway::{Mapping, Value};
 use sha2::{Digest, Sha256};
 
 use crate::{

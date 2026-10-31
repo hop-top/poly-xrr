@@ -241,23 +241,23 @@ impl Redactor {
     /// rewritten; mapping keys and non-string scalars (ints, bools,
     /// null) are left untouched so the YAML shape and types survive
     /// redaction intact.
-    pub(crate) fn redact_node(&self, node: &mut serde_yaml::Value, key: &str) {
+    pub(crate) fn redact_node(&self, node: &mut serde_norway::Value, key: &str) {
         if self.disabled {
             return;
         }
         match node {
-            serde_yaml::Value::Mapping(map) => {
+            serde_norway::Value::Mapping(map) => {
                 for (k, v) in map.iter_mut() {
                     let child_key = k.as_str().unwrap_or("").to_owned();
                     self.redact_node(v, &child_key);
                 }
             }
-            serde_yaml::Value::Sequence(seq) => {
+            serde_norway::Value::Sequence(seq) => {
                 for el in seq.iter_mut() {
                     self.redact_node(el, key);
                 }
             }
-            serde_yaml::Value::String(s) => {
+            serde_norway::Value::String(s) => {
                 if let Some(placeholder) = self.redact_field(key, s) {
                     *s = placeholder;
                 }

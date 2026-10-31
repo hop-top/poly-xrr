@@ -21,7 +21,7 @@ use hop_top_xrr::{
     FileCassette, Mode, Session, XrrError,
 };
 use serde_json::json;
-use serde_yaml::Value;
+use serde_norway::Value;
 use tempfile::TempDir;
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -33,7 +33,7 @@ fn grpc_open(t: StreamType, service: &str, method: &str, msg: Option<&[u8]>) -> 
     let mut identity = BTreeMap::new();
     identity.insert("service".to_string(), json!(service));
     identity.insert("method".to_string(), json!(method));
-    let mut payload = serde_yaml::Mapping::new();
+    let mut payload = serde_norway::Mapping::new();
     payload.insert(Value::String("service".into()), Value::String(service.into()));
     payload.insert(Value::String("method".into()), Value::String(method.into()));
     let counter = t != StreamType::Server;
@@ -49,7 +49,7 @@ fn grpc_open(t: StreamType, service: &str, method: &str, msg: Option<&[u8]>) -> 
 fn sse_open(url: &str) -> StreamOpen {
     let mut identity = BTreeMap::new();
     identity.insert("url".to_string(), json!(url));
-    let mut payload = serde_yaml::Mapping::new();
+    let mut payload = serde_norway::Mapping::new();
     payload.insert(Value::String("url".into()), Value::String(url.into()));
     StreamOpen {
         adapter_id: "sse".into(),
@@ -60,8 +60,8 @@ fn sse_open(url: &str) -> StreamOpen {
     }
 }
 
-fn status_payload(code: i64) -> serde_yaml::Mapping {
-    let mut payload = serde_yaml::Mapping::new();
+fn status_payload(code: i64) -> serde_norway::Mapping {
+    let mut payload = serde_norway::Mapping::new();
     payload.insert(Value::String("status_code".into()), Value::Number(code.into()));
     payload
 }
@@ -234,7 +234,7 @@ struct Interaction {
 
 fn load_manifest(dir: &Path) -> Manifest {
     let raw = std::fs::read_to_string(dir.join("manifest.yaml")).expect("read manifest");
-    serde_yaml::from_str(&raw).expect("parse manifest")
+    serde_norway::from_str(&raw).expect("parse manifest")
 }
 
 fn streamed_dirs() -> Vec<PathBuf> {

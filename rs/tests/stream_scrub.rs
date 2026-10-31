@@ -15,7 +15,7 @@ use hop_top_xrr::{
     FileCassette, Mode, Session, StreamDirection, StreamScrub, StreamScrubInfo, XrrError,
 };
 use serde_json::json;
-use serde_yaml::Value;
+use serde_norway::Value;
 use tempfile::TempDir;
 
 const SECRET: &str = "hunter2-FAKE-TOKEN-0123456789";
@@ -32,7 +32,7 @@ fn grpc_open(t: StreamType, service: &str, method: &str, msg: Option<&[u8]>) -> 
     let mut identity = BTreeMap::new();
     identity.insert("service".to_string(), json!(service));
     identity.insert("method".to_string(), json!(method));
-    let mut payload = serde_yaml::Mapping::new();
+    let mut payload = serde_norway::Mapping::new();
     payload.insert(Value::String("service".into()), Value::String(service.into()));
     payload.insert(Value::String("method".into()), Value::String(method.into()));
     let counter = t != StreamType::Server;
@@ -56,8 +56,8 @@ fn scrubbed_server_open(s: &Session, service: &str, method: &str, msg: &[u8]) ->
     grpc_open(StreamType::Server, service, method, Some(&scrubbed))
 }
 
-fn status_payload(code: i64) -> serde_yaml::Mapping {
-    let mut m = serde_yaml::Mapping::new();
+fn status_payload(code: i64) -> serde_norway::Mapping {
+    let mut m = serde_norway::Mapping::new();
     m.insert(Value::String("status_code".into()), Value::Number(code.into()));
     m
 }

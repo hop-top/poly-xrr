@@ -41,7 +41,7 @@ fn fixtures_root() -> PathBuf {
 
 fn load_manifest(dir: &Path) -> Manifest {
     let raw = std::fs::read_to_string(dir.join("manifest.yaml")).expect("read manifest");
-    serde_yaml::from_str(&raw).expect("parse manifest")
+    serde_norway::from_str(&raw).expect("parse manifest")
 }
 
 fn streamed_dirs() -> Vec<PathBuf> {

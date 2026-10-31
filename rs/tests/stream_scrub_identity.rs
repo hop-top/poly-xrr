@@ -22,7 +22,7 @@ use hop_top_xrr::{
     FileCassette, Mode, Session, StreamDirection, StreamScrub, StreamScrubInfo, XrrError,
 };
 use serde_json::json;
-use serde_yaml::Value;
+use serde_norway::Value;
 use tempfile::TempDir;
 
 const OPEN_MSG: &[u8] = br#"{"room":"ops"}"#;
@@ -65,7 +65,7 @@ fn fixed_open(t: StreamType) -> StreamOpen {
     if t == StreamType::Server {
         identity.insert("msg_hash".to_string(), json!(msg_hash(OPEN_MSG)));
     }
-    let mut payload = serde_yaml::Mapping::new();
+    let mut payload = serde_norway::Mapping::new();
     payload.insert(Value::String("service".into()), Value::String("chat.ChatService".into()));
     payload.insert(Value::String("method".into()), Value::String("Converse".into()));
     StreamOpen {
@@ -77,8 +77,8 @@ fn fixed_open(t: StreamType) -> StreamOpen {
     }
 }
 
-fn status_payload(code: i64) -> serde_yaml::Mapping {
-    let mut m = serde_yaml::Mapping::new();
+fn status_payload(code: i64) -> serde_norway::Mapping {
+    let mut m = serde_norway::Mapping::new();
     m.insert(Value::String("status_code".into()), Value::Number(code.into()));
     m
 }
@@ -354,7 +354,7 @@ fn counting_hook_no_double_scrub() {
     identity.insert("service".to_string(), json!("ops.Deploy"));
     identity.insert("method".to_string(), json!("Run"));
     identity.insert("msg_hash".to_string(), json!(msg_hash(&scrubbed)));
-    let mut payload = serde_yaml::Mapping::new();
+    let mut payload = serde_norway::Mapping::new();
     payload.insert(Value::String("service".into()), Value::String("ops.Deploy".into()));
     payload.insert(Value::String("method".into()), Value::String("Run".into()));
     let open = StreamOpen {
