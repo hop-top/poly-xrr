@@ -173,7 +173,7 @@ fn normalized_request_persists_post_normalizer_paths() {
     };
     let req = norm.normalize_request(&raw);
 
-    let yaml = serde_yaml::to_string(&req).unwrap();
+    let yaml = serde_norway::to_string(&req).unwrap();
     assert!(yaml.contains("path: $TMP/old"), "{yaml}");
     assert!(yaml.contains("dest: $TMP/new"), "{yaml}");
     assert!(!yaml.contains(&root), "raw tmpdir leaked: {yaml}");
@@ -274,7 +274,7 @@ fn dest_gated_on_normalized_value() {
         a.fingerprint(&no_dest).unwrap()
     );
     // The persisted copy agrees: serde skips the empty dest.
-    let yaml = serde_yaml::to_string(&a.normalize_request(&dropped)).unwrap();
+    let yaml = serde_norway::to_string(&a.normalize_request(&dropped)).unwrap();
     assert!(!yaml.contains("dest"), "{yaml}");
 }
 
@@ -342,7 +342,7 @@ fn adapter_is_clone_and_thread_safe() {
     assert_eq!(a.id(), "fs");
 }
 
-// --- serde_yaml wire form ---------------------------------------------------
+// --- serde_norway wire form ---------------------------------------------------
 //
 // Mirrors TestSerializeRoundtrip / TestSerializeOmitsZeroOptionals /
 // TestSerializeBase64Payload / TestSerializeResponseRoundtrip in Go. The
@@ -405,14 +405,14 @@ fn request_roundtrips_through_yaml() {
         flags: 0,
         ..Default::default()
     };
-    let yaml = serde_yaml::to_string(&req).unwrap();
+    let yaml = serde_norway::to_string(&req).unwrap();
     assert!(yaml.contains("mode: 420"), "{yaml}");
 
-    let got: FsRequest = serde_yaml::from_str(&yaml).unwrap();
+    let got: FsRequest = serde_norway::from_str(&yaml).unwrap();
     assert_req_eq(&got, &req);
     assert_eq!(got.mode, Some(0o644), "mode survives the round-trip");
     assert_eq!(
-        serde_yaml::to_string(&got).unwrap(),
+        serde_norway::to_string(&got).unwrap(),
         yaml,
         "re-serializing the round-tripped request must reproduce the text"
     );
@@ -426,7 +426,7 @@ fn request_yaml_omits_unset_optionals() {
         data: "y".into(),
         ..Default::default()
     };
-    let yaml = serde_yaml::to_string(&bare).unwrap();
+    let yaml = serde_norway::to_string(&bare).unwrap();
     for forbidden in [
         "dest:",
         "mode:",
@@ -447,7 +447,7 @@ fn request_yaml_omits_unset_optionals() {
         path: "/d".into(),
         ..Default::default()
     };
-    let yaml = serde_yaml::to_string(&no_data).unwrap();
+    let yaml = serde_norway::to_string(&no_data).unwrap();
     assert!(
         !yaml.contains("data:"),
         "empty data must be omitted: {yaml}"
@@ -458,7 +458,7 @@ fn request_yaml_omits_unset_optionals() {
         mode: Some(0),
         ..bare.clone()
     };
-    let yaml = serde_yaml::to_string(&zero_mode).unwrap();
+    let yaml = serde_norway::to_string(&zero_mode).unwrap();
     assert!(yaml.contains("mode: 0"), "Some(0) must emit mode: {yaml}");
 
     let flagged = FsRequest {
@@ -466,13 +466,13 @@ fn request_yaml_omits_unset_optionals() {
         recursive: true,
         ..bare.clone()
     };
-    let yaml = serde_yaml::to_string(&flagged).unwrap();
+    let yaml = serde_norway::to_string(&flagged).unwrap();
     assert!(yaml.contains("flags: 1"), "{yaml}");
     assert!(yaml.contains("recursive: true"), "{yaml}");
 
     // Replay side: a minimal cassette written by another port (keys
     // omitted, not null) loads with the same defaults it was hashed with.
-    let got: FsRequest = serde_yaml::from_str("op: write\npath: /x\n").unwrap();
+    let got: FsRequest = serde_norway::from_str("op: write\npath: /x\n").unwrap();
     assert_req_eq(
         &got,
         &FsRequest {
@@ -489,7 +489,7 @@ fn request_yaml_omits_unset_optionals() {
 #[test]
 fn base64_payload_roundtrips_through_yaml() {
     // Spec "Data Field Encoding": binary callers base64-encode before the
-    // adapter sees `data`; serde_yaml stores the string verbatim (no
+    // adapter sees `data`; serde_norway stores the string verbatim (no
     // !!binary); the caller decodes on the way back.
     let raw = [0x00u8, 0xff, 0xc3, 0x28, 0x80, 0x01, 0x02, 0x03];
     let encoded = b64_encode(&raw);
@@ -501,11 +501,11 @@ fn base64_payload_roundtrips_through_yaml() {
         data: encoded.clone(),
         ..Default::default()
     };
-    let yaml = serde_yaml::to_string(&req).unwrap();
+    let yaml = serde_norway::to_string(&req).unwrap();
     assert!(yaml.contains(&encoded), "{yaml}");
     assert!(!yaml.contains("!!binary"), "{yaml}");
 
-    let got: FsRequest = serde_yaml::from_str(&yaml).unwrap();
+    let got: FsRequest = serde_norway::from_str(&yaml).unwrap();
     assert_eq!(got.data, encoded, "base64 string must round-trip exactly");
     assert_eq!(
         b64_decode(&got.data),
@@ -523,20 +523,20 @@ fn response_roundtrips_through_yaml() {
         duration_ms: 42,
         bytes_written: 1024,
     };
-    let yaml = serde_yaml::to_string(&resp).unwrap();
-    let got: FsResponse = serde_yaml::from_str(&yaml).unwrap();
+    let yaml = serde_norway::to_string(&resp).unwrap();
+    let got: FsResponse = serde_norway::from_str(&yaml).unwrap();
     assert_eq!(got.duration_ms, 42);
     assert_eq!(got.bytes_written, 1024);
-    assert_eq!(serde_yaml::to_string(&got).unwrap(), yaml);
+    assert_eq!(serde_norway::to_string(&got).unwrap(), yaml);
 
     // Zero counters are omitted on the way out ...
-    let yaml = serde_yaml::to_string(&FsResponse::default()).unwrap();
+    let yaml = serde_norway::to_string(&FsResponse::default()).unwrap();
     assert_eq!(yaml, "{}\n", "all-zero response serializes as an empty map");
-    let got: FsResponse = serde_yaml::from_str(&yaml).unwrap();
+    let got: FsResponse = serde_norway::from_str(&yaml).unwrap();
     assert_eq!((got.duration_ms, got.bytes_written), (0, 0));
 
     // ... and accepted explicitly on the way in (spec failure envelope).
-    let got: FsResponse = serde_yaml::from_str("duration_ms: 0\nbytes_written: 0\n").unwrap();
+    let got: FsResponse = serde_norway::from_str("duration_ms: 0\nbytes_written: 0\n").unwrap();
     assert_eq!((got.duration_ms, got.bytes_written), (0, 0));
 }
 

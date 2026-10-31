@@ -52,7 +52,7 @@ pub struct StreamOpen {
     /// field `"n"`.
     pub counter: bool,
     /// Adapter-defined open-request payload persisted to the req file.
-    pub payload: serde_yaml::Mapping,
+    pub payload: serde_norway::Mapping,
 }
 
 /// Canonical JSON for an open: the adapter identity plus the injected
@@ -111,7 +111,7 @@ pub fn grpc_server_fingerprint(service: &str, method: &str, message: &[u8]) -> S
         stream_type: StreamType::Server,
         identity,
         counter: false,
-        payload: serde_yaml::Mapping::new(),
+        payload: serde_norway::Mapping::new(),
     };
     stream_fingerprint(&open, None).expect("grpc identity is canonical")
 }
@@ -135,7 +135,7 @@ pub fn grpc_counter_fingerprint(
         stream_type,
         identity: grpc_identity(service, method),
         counter: true,
-        payload: serde_yaml::Mapping::new(),
+        payload: serde_norway::Mapping::new(),
     };
     stream_fingerprint(&open, Some(n))
 }
@@ -242,7 +242,7 @@ mod tests {
             stream_type: StreamType::Server,
             identity,
             counter: false,
-            payload: serde_yaml::Mapping::new(),
+            payload: serde_norway::Mapping::new(),
         };
         assert_eq!(
             stream_canonical(&open, None).unwrap(),
@@ -254,7 +254,7 @@ mod tests {
             stream_type: StreamType::Client,
             identity: grpc_identity("files.FileService", "Upload"),
             counter: true,
-            payload: serde_yaml::Mapping::new(),
+            payload: serde_norway::Mapping::new(),
         };
         assert_eq!(
             stream_canonical(&open, Some(0)).unwrap(),
@@ -277,7 +277,7 @@ mod tests {
                 stream_type: StreamType::Bidi,
                 identity: BTreeMap::from([(reserved.to_string(), serde_json::Value::from(1))]),
                 counter: false,
-                payload: serde_yaml::Mapping::new(),
+                payload: serde_norway::Mapping::new(),
             };
             assert!(
                 matches!(stream_fingerprint(&open, None), Err(XrrError::InvalidStream(_))),
@@ -293,7 +293,7 @@ mod tests {
             stream_type: StreamType::Bidi,
             identity: grpc_identity("s.S", "M"),
             counter: true,
-            payload: serde_yaml::Mapping::new(),
+            payload: serde_norway::Mapping::new(),
         };
         assert!(stream_fingerprint(&open, None).is_err());
     }
@@ -315,7 +315,7 @@ mod tests {
             stream_type: StreamType::Client,
             identity: grpc_identity("s.S", "M"),
             counter: true,
-            payload: serde_yaml::Mapping::new(),
+            payload: serde_norway::Mapping::new(),
         };
         assert_eq!(c.next("s.S", "M", StreamType::Client), 0);
         assert_eq!(c.next_open(&open).unwrap(), 1);

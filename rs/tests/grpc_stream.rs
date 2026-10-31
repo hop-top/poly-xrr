@@ -429,7 +429,7 @@ fn recorded_type_divergence_at_same_fingerprint_is_shape_mismatch() {
         stream_type: StreamType::Bidi,
         identity,
         counter: true,
-        payload: serde_yaml::Mapping::new(),
+        payload: serde_norway::Mapping::new(),
     };
     // Sanity: this open resolves the bidi pair.
     session

@@ -39,22 +39,22 @@ struct Interaction {
 /// The typed request is rebuilt from the payload value rather than through a
 /// typed `load`: `HttpRequest.body` is bytes while the v1 envelope carries
 /// the body as a string.
-fn recompute_unary_fingerprint(adapter: &str, payload: &serde_yaml::Value) -> String {
+fn recompute_unary_fingerprint(adapter: &str, payload: &serde_norway::Value) -> String {
     match adapter {
         "exec" => {
-            let req: ExecRequest = serde_yaml::from_value(payload.clone()).expect("exec req");
+            let req: ExecRequest = serde_norway::from_value(payload.clone()).expect("exec req");
             ExecAdapter.fingerprint(&req).expect("exec fingerprint")
         }
         "fs" => {
-            let req: FsRequest = serde_yaml::from_value(payload.clone()).expect("fs req");
+            let req: FsRequest = serde_norway::from_value(payload.clone()).expect("fs req");
             FsAdapter::new().fingerprint(&req).expect("fs fingerprint")
         }
         "sql" => {
-            let req: SqlRequest = serde_yaml::from_value(payload.clone()).expect("sql req");
+            let req: SqlRequest = serde_norway::from_value(payload.clone()).expect("sql req");
             SqlAdapter.fingerprint(&req).expect("sql fingerprint")
         }
         "redis" => {
-            let req: RedisRequest = serde_yaml::from_value(payload.clone()).expect("redis req");
+            let req: RedisRequest = serde_norway::from_value(payload.clone()).expect("redis req");
             RedisAdapter.fingerprint(&req).expect("redis fingerprint")
         }
         "http" => {
@@ -79,7 +79,7 @@ fn recompute_unary_fingerprint(adapter: &str, payload: &serde_yaml::Value) -> St
             let headers: HashMap<String, String> = payload
                 .get("headers")
                 .cloned()
-                .map(|v| serde_yaml::from_value(v).expect("http headers"))
+                .map(|v| serde_norway::from_value(v).expect("http headers"))
                 .unwrap_or_default();
             let req = HttpRequest {
                 method: text("method"),
@@ -124,7 +124,7 @@ fn test_conformance_fixtures() {
         let manifest_str =
             std::fs::read_to_string(&manifest_path).expect("read manifest");
         let manifest: Manifest =
-            serde_yaml::from_str(&manifest_str).expect("parse manifest");
+            serde_norway::from_str(&manifest_str).expect("parse manifest");
 
         let cassette = FileCassette::new(&fixture_dir);
 
@@ -183,7 +183,7 @@ fn test_conformance_fixtures() {
                 }
             }
             if interaction.verify_fingerprint {
-                let (req, _resp): (serde_yaml::Value, serde_yaml::Value) = cassette
+                let (req, _resp): (serde_norway::Value, serde_norway::Value) = cassette
                     .load(&interaction.adapter, &interaction.fingerprint)
                     .expect("load raw pair");
                 assert_eq!(

@@ -3,13 +3,13 @@
 //! Parse, validate, and emit the v1 `stream` envelope extension. Format
 //! layer only — adapter replay semantics (gRPC) are out of scope for this
 //! port. Serde stays permissive on unknown fields per the v1 forward-compat
-//! guarantee: parsing extracts known keys from a `serde_yaml::Value` and
+//! guarantee: parsing extracts known keys from a `serde_norway::Value` and
 //! ignores the rest.
 
 use std::collections::HashSet;
 use std::path::Path;
 
-use serde_yaml::Value;
+use serde_norway::Value;
 
 use crate::{b64, error::XrrError};
 
@@ -223,7 +223,7 @@ struct RawFile {
 }
 
 fn parse_file(yaml: &str, kind: &str) -> Result<RawFile, XrrError> {
-    let root: Value = serde_yaml::from_str(yaml)?;
+    let root: Value = serde_norway::from_str(yaml)?;
     let xrr = get_str(&root, "xrr", kind)?;
     if xrr != "1" {
         return Err(invalid(format!("{kind}: unsupported xrr version {xrr:?}")));
@@ -439,8 +439,8 @@ fn emit_envelope_head(
     if let Some(err) = error {
         out.push_str(&format!("error: {}\n", yaml_dquote(err)));
     }
-    // Payload is adapter-defined; delegate its body to serde_yaml.
-    let body = serde_yaml::to_string(payload).expect("payload serializes");
+    // Payload is adapter-defined; delegate its body to serde_norway.
+    let body = serde_norway::to_string(payload).expect("payload serializes");
     if body.trim() == "{}" {
         out.push_str("payload: {}\n");
     } else {

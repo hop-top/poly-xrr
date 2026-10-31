@@ -9,7 +9,7 @@ pub enum XrrError {
     Io(#[from] std::io::Error),
 
     #[error("xrr: serde error: {0}")]
-    Serde(#[from] serde_yaml::Error),
+    Serde(#[from] serde_norway::Error),
 
     #[error("xrr: json error: {0}")]
     Json(#[from] serde_json::Error),

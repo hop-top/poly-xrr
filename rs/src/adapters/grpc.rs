@@ -30,7 +30,7 @@ use std::sync::Mutex;
 
 use bytes::{Buf, BufMut};
 use prost::Message;
-use serde_yaml::{Mapping, Value};
+use serde_norway::{Mapping, Value};
 use sha2::{Digest, Sha256};
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::Status;
@@ -519,7 +519,7 @@ mod tests {
 
     #[test]
     fn status_code_absent_is_unknown() {
-        let payload: Value = serde_yaml::from_str("{}").unwrap();
+        let payload: Value = serde_norway::from_str("{}").unwrap();
         assert_eq!(status_code_from(&payload), UNKNOWN_CODE);
     }
 
