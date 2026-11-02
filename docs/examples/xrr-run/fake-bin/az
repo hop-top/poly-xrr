@@ -1,0 +1,8 @@
+#!/bin/sh
+# Stand-in for a real CLI so the examples run anywhere. Replace with the real
+# binary on your own machine; the record step is the only one that runs it.
+case "$*" in
+  "account show") printf '{"name":"contoso","user":"dev@example.test"}\n' ;;
+  "group list")   printf '[{"name":"rg-app"},{"name":"rg-data"}]\n' ;;
+  *) echo "az: unknown command: $*" >&2; exit 2 ;;
+esac

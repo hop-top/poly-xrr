@@ -186,6 +186,13 @@ semantics: [spec/cassette-format-streaming.md](spec/cassette-format-streaming.md
   and content-addressed fingerprints.
 - Unary RPCs keep the existing unary cassette shape — nothing migrates.
 
+## Any-language suites: `xrr run`
+
+Shell/bats, pytest and vitest suites that call external CLIs directly need no
+xrr-aware binary: `xrr run --shim az,op -- bats test/` shims them on `PATH`,
+records/replays exec cassettes, and blocks side-effect commands (`open`,
+`osascript`, ...). See [docs/xrr-run.md](docs/xrr-run.md).
+
 ## Cross-process e2e (XRR_MODE + XRR_CASSETTE_DIR)
 
 For test suites that shell out to a compiled binary and assert on its
