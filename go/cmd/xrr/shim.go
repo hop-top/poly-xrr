@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	xrr "hop.top/xrr"
@@ -73,7 +74,7 @@ func (s *shim) run() int {
 }
 
 func (s *shim) passthrough() int {
-	code, err := s.execReal(os.Stdin, os.Stdout, os.Stderr)
+	code, err := s.execReal(os.Stdin, nil, os.Stdout, os.Stderr)
 	if errors.Is(err, errNotFound) {
 		return s.notFound()
 	}
@@ -82,14 +83,17 @@ func (s *shim) passthrough() int {
 }
 
 func (s *shim) record() int {
-	stdin := readStdin()
-	var out, errb bytes.Buffer
+	// Stdin streams live to the real binary and is teed for the cassette,
+	// so an idle inherited pipe (bats, CI) never blocks a command that does
+	// not read it, and a slow producer is not truncated.
+	var in, out, errb lockedBuffer
 	start := time.Now()
-	code, err := s.execReal(strings.NewReader(stdin), io.MultiWriter(os.Stdout, &out), io.MultiWriter(os.Stderr, &errb))
+	code, err := s.execReal(stdinSource(), &in, io.MultiWriter(os.Stdout, &out), io.MultiWriter(os.Stderr, &errb))
 	if errors.Is(err, errNotFound) {
 		return s.notFound()
 	}
 	dur := time.Since(start).Milliseconds()
+	stdin := in.String()
 
 	// Fingerprint over the live argv; the saved copy is scrubbed. Redaction
 	// never shifts a cassette key.
@@ -118,7 +122,7 @@ func (s *shim) saveFailed(fp string, code int, err error) int {
 }
 
 func (s *shim) replay() int {
-	stdin := readStdin()
+	stdin := readStdinIdle(time.Duration(s.cfg.StdinWaitMs) * time.Millisecond)
 	fp, err := xexec.NewAdapter().Fingerprint(&xexec.Request{Argv: s.argv(), Stdin: stdin})
 	if err != nil {
 		fmt.Fprintf(s.stderr, "xrr: fingerprint %s: %v\n", s.name, err)
@@ -149,7 +153,7 @@ func (s *shim) replay() int {
 func (s *shim) miss(fp, stdin string) int {
 	cmdline := strings.Join(s.safeArgv(), " ")
 	if !s.cfg.Strict {
-		code, err := s.execReal(strings.NewReader(stdin), os.Stdout, os.Stderr)
+		code, err := s.execReal(io.MultiReader(strings.NewReader(stdin), os.Stdin), nil, os.Stdout, os.Stderr)
 		if errors.Is(err, errNotFound) {
 			return s.notFound()
 		}
@@ -184,7 +188,13 @@ var errNotFound = errors.New("real binary not found")
 
 // execReal runs the real binary, resolved from the PATH that existed
 // before shims were prepended, and returns its exit code.
-func (s *shim) execReal(in io.Reader, out, errw io.Writer) (int, error) {
+//
+// A *os.File stdin is handed to the child directly (tty-ness preserved).
+// Any other reader is pumped by our own goroutine that is never waited on:
+// exec.Cmd would wait for a copier blocked on an idle inherited pipe, and
+// WaitDelay cannot interrupt a blocked source read. tee, when set,
+// receives a copy of every byte that reaches the child.
+func (s *shim) execReal(in io.Reader, tee io.Writer, out, errw io.Writer) (int, error) {
 	path, ok := lookPathIn(s.name, s.cfg.RealPath)
 	if !ok {
 		return exitNotFound, errNotFound
@@ -192,12 +202,45 @@ func (s *shim) execReal(in io.Reader, out, errw io.Writer) (int, error) {
 	cmd := exec.Command(path, s.args...)
 	cmd.Args[0] = s.name
 	cmd.Env = withEnv(os.Environ(), "PATH", s.cfg.RealPath)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errw
-	err := cmd.Run()
-	var ee *exec.ExitError
-	if err != nil && !errors.As(err, &ee) {
+	cmd.Stdout, cmd.Stderr = out, errw
+	// A child that exits leaving stdout/stderr open (daemonised grandchild)
+	// must not hold the call forever.
+	cmd.WaitDelay = 200 * time.Millisecond
+
+	var pump func(io.WriteCloser)
+	if f, isFile := in.(*os.File); isFile && tee == nil {
+		cmd.Stdin = f
+	} else if in != nil {
+		pw, err := cmd.StdinPipe()
+		if err != nil {
+			return exitNotFound, err
+		}
+		pump = func(w io.WriteCloser) {
+			var dst io.Writer = w
+			if tee != nil {
+				dst = io.MultiWriter(tee, w) // tee first: it must hold the bytes before the child can consume them
+			}
+			_, _ = io.Copy(dst, in)
+			_ = w.Close()
+		}
+		if err := cmd.Start(); err != nil {
+			fmt.Fprintf(s.stderr, "xrr: run %s: %v\n", path, err)
+			return exitNotFound, nil
+		}
+		go pump(pw)
+		return s.wait(cmd)
+	}
+	if err := cmd.Start(); err != nil {
 		fmt.Fprintf(s.stderr, "xrr: run %s: %v\n", path, err)
 		return exitNotFound, nil
+	}
+	return s.wait(cmd)
+}
+
+func (s *shim) wait(cmd *exec.Cmd) (int, error) {
+	err := cmd.Wait()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil // exited normally; only stdio draining was cut short
 	}
 	return exitCodeOf(err), nil
 }
@@ -216,13 +259,78 @@ func lookPathIn(name, pathVar string) (string, bool) {
 	return "", false
 }
 
-// readStdin returns the shim's stdin as a string. A terminal (or /dev/null)
-// reads as empty so an interactive shell never blocks on it.
-func readStdin() string {
-	fi, err := os.Stdin.Stat()
-	if err != nil || fi.Mode()&os.ModeCharDevice != 0 {
+// stdinSource is what record mode feeds the real binary: the shim's own
+// stdin. A terminal or /dev/null (char device) is passed as the file itself
+// and records as empty stdin.
+func stdinSource() io.Reader {
+	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice != 0 {
+		return os.Stdin
+	}
+	return struct{ io.Reader }{os.Stdin} // hide *os.File: pump + tee
+}
+
+// readStdinIdle reads stdin until EOF, but gives up once nothing arrives
+// for idle. Replay must know the stdin bytes to pick a cassette, yet an
+// inherited pipe that is open and silent (bats, CI runners) never reaches
+// EOF; treating it as empty keeps the shim from hanging. A producer slower
+// than idle is cut short (and misses loudly in strict mode); raise
+// --stdin-wait for it.
+func readStdinIdle(idle time.Duration) string {
+	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice != 0 {
 		return ""
 	}
-	b, _ := io.ReadAll(os.Stdin)
-	return string(b)
+	chunks := make(chan []byte)
+	go func() {
+		defer close(chunks)
+		buf := make([]byte, 32<<10)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				chunks <- append([]byte(nil), buf[:n]...)
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	var acc []byte
+	t := time.NewTimer(idle)
+	defer t.Stop()
+	for {
+		select {
+		case b, ok := <-chunks:
+			if !ok {
+				return string(acc)
+			}
+			acc = append(acc, b...)
+			if !t.Stop() {
+				select {
+				case <-t.C:
+				default:
+				}
+			}
+			t.Reset(idle)
+		case <-t.C:
+			return string(acc)
+		}
+	}
+}
+
+// lockedBuffer is a bytes.Buffer safe for the concurrent copy goroutines
+// exec.Cmd runs for non-file stdio.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
