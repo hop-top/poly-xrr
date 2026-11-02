@@ -30,20 +30,24 @@ POSIX only (shims are `sh` stubs).
 xrr run [--mode record|replay|passthrough] [--cassettes DIR]
         [--shim cmd,...] [--deny cmd,...] [--no-default-deny]
         [--strict[=false]] [--env NAME,...] [--stdin-wait 250ms]
-        [--report-file FILE] -- <cmd> [args...]
+        [--scrub NAME,...] [--no-scrub NAME,...]
+        [--report-file FILE] [--config FILE] -- <cmd> [args...]
 ```
 
 | Flag | Meaning |
 |------|---------|
-| `--mode` | `record`, `replay` or `passthrough` (shims run the real binary, deny still enforced). Default `$XRR_MODE`, else `replay`. |
-| `--cassettes` | Cassette dir. Default `$XRR_CASSETTE_DIR`, else `./cassettes`. Created in record mode; must exist in replay. |
+| `--mode` | `record`, `replay` or `passthrough` (shims run the real binary, deny still enforced). Default `replay`. |
+| `--cassettes` | Cassette dir. Default `./cassettes`. Created in record mode; must exist in replay. |
 | `--shim` | Commands to record/replay. Repeatable, comma-separated. Required in record/replay. |
 | `--deny` | Extra commands to block, added to the default set. |
 | `--no-default-deny` | Drop the built-in set: `open xdg-open wslview explorer.exe start sendmail mail osascript say pbcopy notify-send`. An explicit `--shim` of one of these wins over the default. |
 | `--strict` | Default on. Replay: a shimmed call with no cassette fails with `cassette miss`. `--strict=false` falls through to the real binary. |
 | `--env` | Env var names captured into the cassette request (redacted like any field). Not part of the fingerprint. |
 | `--stdin-wait` | Replay: stop reading a shim's stdin after this long with no data. |
+| `--scrub` | Env var names (or `path.Match` globs, e.g. `MY_*`) whose values are always scrubbed from cassettes. Repeatable, comma-separated. |
+| `--no-scrub` | Env var names/globs whose values are never scrubbed, even when the name looks like a credential. |
 | `--report-file` | Also write the summary as JSON. |
+| `--config` | Project config file; replaces `./.xrr.yaml`. Must exist. |
 
 Typical flow:
 
@@ -74,6 +78,47 @@ xrr run: replay, 3 shimmed call(s)
 
 A suite that swallows a shim failure (`open x || true`) still fails the run.
 
+## Configuration
+
+Every option can come from a config file or the environment, not only flags.
+Sources, highest first:
+
+| # | Source | Notes |
+|---|--------|-------|
+| 1 | flags | Only flags actually passed count. |
+| 2 | environment | `XRR_*`, see below. Empty = unset. |
+| 3 | project file | `./.xrr.yaml` (cwd only, no parent lookup), or `--config FILE`. |
+| 4 | user file | `$XDG_CONFIG_HOME/xrr/config.yaml`, default `~/.config/xrr/config.yaml`. |
+
+Missing default files are ignored; a missing `--config` file is an error.
+
+**Merge rules.** Scalars: the highest source that sets one wins. Lists
+(`shim`, `deny`, `env`, `scrub.*`): union of all sources, so a lower layer
+can be extended but not shrunk. To undo a lower-layer entry use the opposite
+control (`no_default_deny`, `scrub.allow`, or point `--config` at a different
+file). Cross-list conflicts after merging are usage errors: a name in both
+`scrub.deny` and `scrub.allow`, or in both `shim` and `deny`.
+
+**Schema** (`.xrr.yaml`; unknown keys are an error):
+
+```yaml
+mode: replay             # record | replay | passthrough        env XRR_MODE
+cassettes: test/cass     # relative paths resolve against this   env XRR_CASSETTE_DIR
+                         #   file's directory (env/flags: cwd)
+shim: [az, op, gh]       # commands to record/replay             env XRR_SHIM
+deny: [rm-rf-prod]       # added to the default deny set         env XRR_DENY
+no_default_deny: false   # drop the built-in deny set            env XRR_NO_DEFAULT_DENY
+strict: true             # replay: miss fails                    env XRR_STRICT
+env: [REGION]            # env vars captured into cassettes      env XRR_ENV
+stdin_wait: 250ms        # replay stdin idle limit               env XRR_STDIN_WAIT
+report_file: report.json # JSON summary (relative: file's dir)   env XRR_REPORT_FILE
+scrub:
+  deny: [PUBLIC_NOTE, MY_*]   # always scrub     flag --scrub     env XRR_SCRUB
+  allow: [FIXTURE_TOKEN]      # never scrub      flag --no-scrub  env XRR_NO_SCRUB
+```
+
+Env lists are comma-separated. Booleans accept what Go's `strconv.ParseBool` does.
+
 ## Redaction
 
 Cassettes pass through the same redaction as every xrr adapter
@@ -81,8 +126,14 @@ Cassettes pass through the same redaction as every xrr adapter
 
 - argv: `--password X`, `--api-key=X`, `TOKEN=X` become
   `<redacted:NAME>`; vendor-shaped tokens (`ghp_`, `AKIA`, JWT, ...) anywhere.
-- stdout/stderr/stdin/argv: the *value* of any credential-named env var
-  (8+ chars) present when the shim runs is replaced with its placeholder.
+- stdout/stderr/stdin/argv: the *value* of an env var present when the shim
+  runs is replaced with its placeholder. Which variables, highest first:
+  1. name matches `scrub.deny` (`--scrub`): scrubbed, any length;
+  2. name matches `scrub.allow` (`--no-scrub`): kept;
+  3. credential-looking name (`*_TOKEN`, `*_SECRET`, `*PASSWORD*`, ...) with
+     a value of 8+ characters: scrubbed. This is the default behaviour.
+- The scrub lists govern env *values*. Redaction of a captured `env:` field
+  by its *name* (e.g. `API_TOKEN`) is still controlled by `XRR_REDACT_ALLOW`.
 - The fingerprint is always computed over the live argv, so redaction never
   changes a cassette key and replay keeps matching.
 - Existing field rule: a value matching a vendor pattern inside `stdout`
