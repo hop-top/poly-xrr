@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	xrr "hop.top/xrr"
 )
@@ -28,6 +29,7 @@ type runOpts struct {
 	mode, cassettes, reportFile string
 	shim, deny, env             listFlag
 	noDefaultDeny, strict       bool
+	stdinWait                   time.Duration
 }
 
 func runCmd(args []string, stdout, stderr io.Writer) int {
@@ -42,6 +44,7 @@ func runCmd(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(&o.noDefaultDeny, "no-default-deny", false, "do not block the built-in side-effect set (open, xdg-open, osascript, sendmail, pbcopy, ...)")
 	fs.BoolVar(&o.strict, "strict", true, "replay: a shimmed call with no cassette fails (--strict=false falls through to the real binary)")
 	fs.Var(&o.env, "env", "comma-separated env var names to capture into cassettes (redacted like any other field)")
+	fs.DurationVar(&o.stdinWait, "stdin-wait", 250*time.Millisecond, "replay: stop reading a shim's stdin after this long with no data (an open, silent pipe counts as empty)")
 	fs.StringVar(&o.reportFile, "report-file", "", "also write the summary as JSON to this file")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -114,7 +117,7 @@ func (o runOpts) resolve(child []string) (runConfig, []string, error) {
 	}
 	return runConfig{
 		Mode: mode, CassetteDir: abs, RealPath: os.Getenv("PATH"),
-		Strict: o.strict, Deny: deny, EnvCapture: o.env,
+		Strict: o.strict, Deny: deny, EnvCapture: o.env, StdinWaitMs: int(o.stdinWait / time.Millisecond),
 	}, child, nil
 }
 

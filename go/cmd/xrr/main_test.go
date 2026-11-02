@@ -3,11 +3,13 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,7 +51,14 @@ type result struct {
 // xrrRun runs the CLI with PATH=path and extra env (KEY=VAL).
 func xrrRun(t *testing.T, path string, extraEnv []string, args ...string) result {
 	t.Helper()
+	return xrrRunIn(t, nil, path, extraEnv, args...)
+}
+
+// xrrRunIn is xrrRun with an explicit stdin (nil = /dev/null).
+func xrrRunIn(t *testing.T, stdin io.Reader, path string, extraEnv []string, args ...string) result {
+	t.Helper()
 	cmd := exec.Command(xrrBin, args...)
+	cmd.Stdin = stdin
 	cmd.Env = append([]string{"PATH=" + path, "HOME=" + t.TempDir()}, extraEnv...)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
@@ -319,4 +328,53 @@ func TestEnvSecretsScrubOutputButNotShortValues(t *testing.T) {
 	rd := xrr.NewRedactor(xrr.RedactConfig{})
 	es := collectEnvSecrets(rd, []string{"API_TOKEN=abcdefgh12345", "DB_PASSWORD=short", "REGION=eu-west-1-long"})
 	assert.Equal(t, "x <redacted:API_TOKEN> y short eu-west-1-long", es.scrub("x abcdefgh12345 y short eu-west-1-long"))
+}
+
+// An inherited stdin that is open but silent (bats, CI runners) must not hang
+// shims, in any mode, for commands that do not read it.
+func TestIdleOpenStdinDoesNotHang(t *testing.T) {
+	realbin := t.TempDir()
+	plant(t, realbin, "az", `echo ok`)
+	cass := filepath.Join(t.TempDir(), "c")
+	suite := writeSuite(t, `az x`)
+	pr, pw, err := os.Pipe()
+	require.NoError(t, err)
+	defer pw.Close()
+	defer pr.Close()
+
+	done := make(chan result, 2)
+	go func() {
+		done <- xrrRunIn(t, pr, realbin+":"+sysPath, nil, "run", "--mode", "record", "--cassettes", cass, "--shim", "az", "--", suite)
+	}()
+	select {
+	case r := <-done:
+		require.Equal(t, 0, r.code, r.stderr)
+	case <-time.After(15 * time.Second):
+		t.Fatal("record hung on idle stdin")
+	}
+	go func() {
+		done <- xrrRunIn(t, pr, sysPath, nil, "run", "--mode", "replay", "--cassettes", cass, "--shim", "az", "--", suite)
+	}()
+	select {
+	case r := <-done:
+		require.Equal(t, 0, r.code, r.stderr)
+		assert.Equal(t, "ok\n", r.stdout)
+	case <-time.After(15 * time.Second):
+		t.Fatal("replay hung on idle stdin")
+	}
+}
+
+func TestStdinIsRecordedAndMatchesOnReplay(t *testing.T) {
+	realbin := t.TempDir()
+	plant(t, realbin, "op", `echo "got:$(cat)"`)
+	cass := filepath.Join(t.TempDir(), "c")
+	suite := writeSuite(t, `echo one | op inject; echo two | op inject; (sleep 0.6; echo late) | op inject`)
+
+	rec := xrrRun(t, realbin+":"+sysPath, nil, "run", "--mode", "record", "--cassettes", cass, "--shim", "op", "--", suite)
+	require.Equal(t, 0, rec.code, rec.stderr)
+	assert.Equal(t, "got:one\ngot:two\ngot:late\n", rec.stdout, "slow producer must reach the real binary intact")
+
+	rep := xrrRun(t, sysPath, nil, "run", "--mode", "replay", "--cassettes", cass, "--stdin-wait", "3s", "--shim", "op", "--", suite)
+	require.Equal(t, 0, rep.code, rep.stderr)
+	assert.Equal(t, rec.stdout, rep.stdout)
 }
