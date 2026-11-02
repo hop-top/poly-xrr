@@ -25,7 +25,9 @@ type runConfig struct {
 	Strict      bool     `json:"strict"`
 	Deny        []string `json:"deny"`
 	EnvCapture  []string `json:"env_capture,omitempty"`
-	StdinWaitMs int      `json:"stdin_wait_ms"` // replay: idle limit when reading stdin
+	ScrubDeny   []string `json:"scrub_deny,omitempty"`  // env names always scrubbed
+	ScrubAllow  []string `json:"scrub_allow,omitempty"` // env names never scrubbed
+	StdinWaitMs int      `json:"stdin_wait_ms"`         // replay: idle limit when reading stdin
 }
 
 const (

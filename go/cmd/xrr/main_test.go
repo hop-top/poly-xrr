@@ -57,9 +57,29 @@ func xrrRun(t *testing.T, path string, extraEnv []string, args ...string) result
 // xrrRunIn is xrrRun with an explicit stdin (nil = /dev/null).
 func xrrRunIn(t *testing.T, stdin io.Reader, path string, extraEnv []string, args ...string) result {
 	t.Helper()
+	return xrrRunSpec(t, runSpec{stdin: stdin, path: path, env: extraEnv}, args...)
+}
+
+// runSpec fully describes a CLI invocation. The environment is built from
+// scratch (never inherited), HOME is a fresh temp dir with XDG_CONFIG_HOME
+// unset, and cwd defaults to a fresh temp dir, so a developer's real
+// config files can never leak into a test.
+type runSpec struct {
+	stdin io.Reader
+	path  string
+	env   []string
+	dir   string // cwd; empty = fresh temp dir
+}
+
+func xrrRunSpec(t *testing.T, sp runSpec, args ...string) result {
+	t.Helper()
 	cmd := exec.Command(xrrBin, args...)
-	cmd.Stdin = stdin
-	cmd.Env = append([]string{"PATH=" + path, "HOME=" + t.TempDir()}, extraEnv...)
+	cmd.Stdin = sp.stdin
+	cmd.Dir = sp.dir
+	if cmd.Dir == "" {
+		cmd.Dir = t.TempDir()
+	}
+	cmd.Env = append([]string{"PATH=" + sp.path, "HOME=" + t.TempDir()}, sp.env...)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
 	err := cmd.Run()
@@ -326,7 +346,7 @@ func TestListFlag(t *testing.T) {
 
 func TestEnvSecretsScrubOutputButNotShortValues(t *testing.T) {
 	rd := xrr.NewRedactor(xrr.RedactConfig{})
-	es := collectEnvSecrets(rd, []string{"API_TOKEN=abcdefgh12345", "DB_PASSWORD=short", "REGION=eu-west-1-long"})
+	es := collectEnvSecrets(rd, []string{"API_TOKEN=abcdefgh12345", "DB_PASSWORD=short", "REGION=eu-west-1-long"}, nil, nil)
 	assert.Equal(t, "x <redacted:API_TOKEN> y short eu-west-1-long", es.scrub("x abcdefgh12345 y short eu-west-1-long"))
 }
 
@@ -377,4 +397,12 @@ func TestStdinIsRecordedAndMatchesOnReplay(t *testing.T) {
 	rep := xrrRun(t, sysPath, nil, "run", "--mode", "replay", "--cassettes", cass, "--stdin-wait", "3s", "--shim", "op", "--", suite)
 	require.Equal(t, 0, rep.code, rep.stderr)
 	assert.Equal(t, rec.stdout, rep.stdout)
+}
+
+// fingerprintOf is the exec fingerprint of argv with empty stdin.
+func fingerprintOf(t *testing.T, argv []string) string {
+	t.Helper()
+	fp, err := xexec.NewAdapter().Fingerprint(&xexec.Request{Argv: argv})
+	require.NoError(t, err)
+	return fp
 }
