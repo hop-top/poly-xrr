@@ -30,7 +30,7 @@ func shimCmd(args []string, stderr io.Writer) int {
 	}
 	rd := xrr.NewRedactor(xrr.RedactConfigFromEnv())
 	return (&shim{cfg: cfg, runDir: runDir, name: name, args: rest, stderr: stderr,
-		rd: rd, env: collectEnvSecrets(rd, os.Environ())}).run()
+		rd: rd, env: collectEnvSecrets(rd, os.Environ(), cfg.ScrubDeny, cfg.ScrubAllow)}).run()
 }
 
 type shim struct {
@@ -178,7 +178,7 @@ func (s *shim) captureEnv() map[string]string {
 	m := map[string]string{}
 	for _, k := range s.cfg.EnvCapture {
 		if v, ok := os.LookupEnv(k); ok {
-			m[k] = v
+			m[k] = s.env.scrub(v)
 		}
 	}
 	return m

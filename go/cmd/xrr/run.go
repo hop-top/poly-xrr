@@ -25,33 +25,73 @@ A summary goes to stderr; the run fails on any deny hit or cassette miss.
 flags:
 `
 
+// runOpts is the fully resolved configuration of one run.
 type runOpts struct {
 	mode, cassettes, reportFile string
-	shim, deny, env             listFlag
+	shim, deny, env             []string
+	scrubDeny, scrubAllow       []string
 	noDefaultDeny, strict       bool
 	stdinWait                   time.Duration
 }
 
 func runCmd(args []string, stdout, stderr io.Writer) int {
-	var o runOpts
+	var shim, deny, env, scrubDeny, scrubAllow listFlag
+	var mode, cassettes, reportFile, configPath string
+	var noDefaultDeny, strict bool
+	var stdinWait time.Duration
 	fs := flag.NewFlagSet("xrr run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, runUsage); fs.PrintDefaults() }
-	fs.StringVar(&o.mode, "mode", "", "record | replay | passthrough (default: $XRR_MODE, else replay)")
-	fs.StringVar(&o.cassettes, "cassettes", "", "cassette directory (default: $XRR_CASSETTE_DIR, else ./cassettes)")
-	fs.Var(&o.shim, "shim", "comma-separated commands to record/replay (repeatable)")
-	fs.Var(&o.deny, "deny", "comma-separated commands to block, added to the default side-effect set (repeatable)")
-	fs.BoolVar(&o.noDefaultDeny, "no-default-deny", false, "do not block the built-in side-effect set (open, xdg-open, osascript, sendmail, pbcopy, ...)")
-	fs.BoolVar(&o.strict, "strict", true, "replay: a shimmed call with no cassette fails (--strict=false falls through to the real binary)")
-	fs.Var(&o.env, "env", "comma-separated env var names to capture into cassettes (redacted like any other field)")
-	fs.DurationVar(&o.stdinWait, "stdin-wait", 250*time.Millisecond, "replay: stop reading a shim's stdin after this long with no data (an open, silent pipe counts as empty)")
-	fs.StringVar(&o.reportFile, "report-file", "", "also write the summary as JSON to this file")
+	fs.StringVar(&mode, "mode", "", "record | replay | passthrough (default replay)")
+	fs.StringVar(&cassettes, "cassettes", "", "cassette directory (default ./cassettes)")
+	fs.Var(&shim, "shim", "comma-separated commands to record/replay (repeatable)")
+	fs.Var(&deny, "deny", "comma-separated commands to block, added to the default side-effect set (repeatable)")
+	fs.BoolVar(&noDefaultDeny, "no-default-deny", false, "do not block the built-in side-effect set (open, xdg-open, osascript, sendmail, pbcopy, ...)")
+	fs.BoolVar(&strict, "strict", true, "replay: a shimmed call with no cassette fails (--strict=false falls through to the real binary)")
+	fs.Var(&env, "env", "comma-separated env var names to capture into cassettes (redacted like any other field)")
+	fs.Var(&scrubDeny, "scrub", "comma-separated env var names (globs ok) whose values are always scrubbed from cassettes (repeatable)")
+	fs.Var(&scrubAllow, "no-scrub", "comma-separated env var names (globs ok) whose values are never scrubbed, even if the name looks like a credential (repeatable)")
+	fs.DurationVar(&stdinWait, "stdin-wait", 250*time.Millisecond, "replay: stop reading a shim's stdin after this long with no data (an open, silent pipe counts as empty)")
+	fs.StringVar(&reportFile, "report-file", "", "also write the summary as JSON to this file")
+	fs.StringVar(&configPath, "config", "", "project config file (default ./.xrr.yaml); replaces it, must exist")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return exitOK
 		}
 		return exitUsage
 	}
+
+	// Only flags the user actually passed form the flag layer.
+	var fl settings
+	fl.Shim, fl.Deny, fl.Env = shim, deny, env
+	fl.Scrub.Deny, fl.Scrub.Allow = scrubDeny, scrubAllow
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "mode":
+			fl.Mode = &mode
+		case "cassettes":
+			fl.Cassettes = &cassettes
+		case "no-default-deny":
+			fl.NoDefaultDeny = &noDefaultDeny
+		case "strict":
+			fl.Strict = &strict
+		case "stdin-wait":
+			s := stdinWait.String()
+			fl.StdinWait = &s
+		case "report-file":
+			fl.ReportFile = &reportFile
+		}
+	})
+	if err := fl.validate(); err != nil {
+		fmt.Fprintf(stderr, "xrr run: %v\n", err)
+		return exitUsage
+	}
+	layers, err := loadLayers(configPath, fl, os.Getenv)
+	if err != nil {
+		fmt.Fprintf(stderr, "xrr run: %v\n", err)
+		return exitUsage
+	}
+	o := layers.toOpts()
 	cfg, child, err := o.resolve(fs.Args())
 	if err != nil {
 		fmt.Fprintf(stderr, "xrr run: %v\n", err)
@@ -60,41 +100,14 @@ func runCmd(args []string, stdout, stderr io.Writer) int {
 	return execute(o, cfg, child, stdout, stderr)
 }
 
-// resolve validates flags and builds the config handed to the shims.
+// resolve validates the merged options and builds the config handed to the shims.
 func (o runOpts) resolve(child []string) (runConfig, []string, error) {
 	var cfg runConfig
 	if len(child) == 0 {
 		return cfg, nil, errors.New("no command to run (usage: xrr run [flags] -- <cmd> [args...])")
 	}
 	mode := o.mode
-	if mode == "" {
-		mode = os.Getenv(xrr.EnvMode)
-	}
-	if mode == "" {
-		mode = string(xrr.ModeReplay)
-	}
-	switch xrr.Mode(mode) {
-	case xrr.ModeRecord, xrr.ModeReplay, xrr.ModePassthrough:
-	default:
-		return cfg, nil, fmt.Errorf("invalid mode %q (want record|replay|passthrough)", mode)
-	}
-	for _, n := range append(append([]string{}, o.shim...), o.deny...) {
-		if err := validCommandName(n); err != nil {
-			return cfg, nil, err
-		}
-	}
-	for _, n := range o.shim {
-		if contains(o.deny, n) {
-			return cfg, nil, fmt.Errorf("%q is in both --shim and --deny", n)
-		}
-	}
 	dir := o.cassettes
-	if dir == "" {
-		dir = os.Getenv(xrr.EnvCassetteDir)
-	}
-	if dir == "" {
-		dir = "cassettes"
-	}
 	if xrr.Mode(mode) != xrr.ModePassthrough {
 		if len(o.shim) == 0 {
 			return cfg, nil, fmt.Errorf("--shim is required in %s mode", mode)
@@ -117,7 +130,9 @@ func (o runOpts) resolve(child []string) (runConfig, []string, error) {
 	}
 	return runConfig{
 		Mode: mode, CassetteDir: abs, RealPath: os.Getenv("PATH"),
-		Strict: o.strict, Deny: deny, EnvCapture: o.env, StdinWaitMs: int(o.stdinWait / time.Millisecond),
+		Strict: o.strict, Deny: deny, EnvCapture: o.env,
+		ScrubDeny: o.scrubDeny, ScrubAllow: o.scrubAllow,
+		StdinWaitMs: int(o.stdinWait / time.Millisecond),
 	}, child, nil
 }
 
