@@ -72,26 +72,29 @@ func touch(t *testing.T, p string) {
 func TestLookPathInWindows(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	touch(t, filepath.Join(a, "readme.txt"))
-	touch(t, filepath.Join(b, "az.cmd"))
+	// File names carry the extension spelled as PATHEXT spells it: lookPathIn
+	// probes name+ext and leaves case folding to the (Windows) filesystem,
+	// so this test must not depend on the host filesystem folding case.
+	touch(t, filepath.Join(b, "az.CMD"))
 	touch(t, filepath.Join(b, "tool.EXE"))
-	touch(t, filepath.Join(a, "tool.bat"))
+	touch(t, filepath.Join(a, "tool.BAT"))
 	sep := string(os.PathListSeparator)
 	pathVar := a + sep + b
 	ext := ".COM;.EXE;.BAT;.CMD"
 
 	p, ok := lookPathIn("az", pathVar, "windows", ext)
 	assert.True(t, ok)
-	assert.True(t, strings.EqualFold(filepath.Join(b, "az.cmd"), p), p)
+	assert.Equal(t, filepath.Join(b, "az.CMD"), p)
 
 	// dir order wins over extension order
 	p, ok = lookPathIn("tool", pathVar, "windows", ext)
 	assert.True(t, ok)
-	assert.True(t, strings.EqualFold(filepath.Join(a, "tool.bat"), p), p)
+	assert.Equal(t, filepath.Join(a, "tool.BAT"), p)
 
 	// name already carrying an extension
-	p, ok = lookPathIn("az.cmd", pathVar, "windows", ext)
+	p, ok = lookPathIn("az.CMD", pathVar, "windows", ext)
 	assert.True(t, ok)
-	assert.Equal(t, filepath.Join(b, "az.cmd"), p)
+	assert.Equal(t, filepath.Join(b, "az.CMD"), p)
 
 	// not in PATHEXT: not executable
 	_, ok = lookPathIn("readme", pathVar, "windows", ext)
