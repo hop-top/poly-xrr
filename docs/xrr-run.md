@@ -177,10 +177,6 @@ Two entries (shim and/or deny, from flags, env or config) with the same
 cassette name, e.g. `foo` + `foo.exe` or `AZ` + `az`, are a usage error
 (exit 2) naming both.
 
-Behaviour change: before this, POSIX kept the name literally. Cassettes
-recorded on macOS/Linux with an uppercase or extension-bearing shim name no
-longer match; re-record them.
-
 Windows specifics:
 
 - `PATH` is joined with `;`; the variable is matched case-insensitively
