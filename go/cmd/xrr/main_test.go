@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -21,18 +22,24 @@ import (
 // re-exec it, so tests must run the real binary, not call main in-process.
 var xrrBin string
 
+// fakeBin is testdata/fakecli, compiled once; tests copy it under the name
+// of the CLI (or suite) they want to fake.
+var fakeBin string
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "xrr-cli-test")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	xrrBin = filepath.Join(dir, "xrr")
-	out, err := exec.Command("go", "build", "-buildvcs=false", "-o", xrrBin, ".").CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build failed: %v\n%s", err, out)
-		os.RemoveAll(dir)
-		os.Exit(1)
+	xrrBin = filepath.Join(dir, "xrr"+exeExt())
+	fakeBin = filepath.Join(dir, "fakecli"+exeExt())
+	for out, pkg := range map[string]string{xrrBin: ".", fakeBin: "./testdata/fakecli"} {
+		if b, err := exec.Command("go", "build", "-buildvcs=false", "-o", out, pkg).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "build %s failed: %v\n%s", pkg, err, b)
+			os.RemoveAll(dir)
+			os.Exit(1)
+		}
 	}
 	code := m.Run()
 	os.RemoveAll(dir)
@@ -80,6 +87,9 @@ func xrrRunSpec(t *testing.T, sp runSpec, args ...string) result {
 		cmd.Dir = t.TempDir()
 	}
 	cmd.Env = append([]string{"PATH=" + sp.path, "HOME=" + t.TempDir()}, sp.env...)
+	if sr := os.Getenv("SystemRoot"); sr != "" { // Windows: child processes need it
+		cmd.Env = append(cmd.Env, "SystemRoot="+sr)
+	}
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se
 	err := cmd.Run()
@@ -92,15 +102,26 @@ func xrrRunSpec(t *testing.T, sp runSpec, args ...string) result {
 	return result{so.String(), se.String(), code}
 }
 
+// requireSh skips tests that plant sh/bash fakes; Windows is covered by the
+// Native* tests, which build their fakes from Go.
+func requireSh(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("needs sh/bash")
+	}
+}
+
 // plant writes an executable script into dir.
 func plant(t *testing.T, dir, name, body string) {
 	t.Helper()
+	requireSh(t)
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/sh\n"+body), 0o755))
 }
 
 func writeSuite(t *testing.T, body string) string {
 	t.Helper()
+	requireSh(t)
 	p := filepath.Join(t.TempDir(), "suite.sh")
 	require.NoError(t, os.WriteFile(p, []byte("#!/bin/bash\n"+body), 0o755))
 	return p
@@ -275,6 +296,7 @@ az login --token `+ghp+` --password hunter2 --client-secret=s3cr3t-value user=bo
 }
 
 func TestChildExitCodePropagates(t *testing.T) {
+	requireSh(t)
 	cass := t.TempDir()
 	r := xrrRun(t, sysPath, nil, "run", "--mode", "passthrough", "--cassettes", cass, "--", "bash", "-c", "exit 7")
 	assert.Equal(t, 7, r.code)

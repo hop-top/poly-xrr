@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 )
 
 // Exit codes. A child's own non-zero exit code always wins over exitViolation.
@@ -29,12 +30,30 @@ const usageText = `usage: xrr <command> [flags]
 
 commands:
   run    run a command with PATH shims that record/replay external CLIs
-  shim   internal: entrypoint of the generated shim scripts
 
 run 'xrr run -h' for flags.
 `
 
-func main() { os.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr)) }
+func main() {
+	if code, ok := runAsShim(os.Args[1:], os.Stderr); ok {
+		os.Exit(code)
+	}
+	os.Exit(dispatch(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// runAsShim handles the case where this binary was started as a shim, i.e.
+// from <run-dir>/bin of a run (see shimIdentity).
+func runAsShim(args []string, stderr io.Writer) (int, bool) {
+	exe, err := os.Executable()
+	if err != nil {
+		return 0, false
+	}
+	runDir, name, ok := shimIdentity(exe, runtime.GOOS)
+	if !ok {
+		return 0, false
+	}
+	return shimMain(runDir, name, args, stderr), true
+}
 
 func dispatch(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -44,8 +63,6 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "run":
 		return runCmd(args[1:], stdout, stderr)
-	case "shim":
-		return shimCmd(args[1:], stderr)
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usageText)
 		return exitOK

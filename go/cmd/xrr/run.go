@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strings"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -123,7 +123,7 @@ func (o runOpts) resolve(child []string) (runConfig, []string, error) {
 	deny := append([]string{}, o.deny...)
 	if !o.noDefaultDeny {
 		for _, d := range defaultDeny {
-			if !contains(o.shim, d) && !contains(deny, d) {
+			if !inNames(o.shim, d, runtime.GOOS) && !inNames(deny, d, runtime.GOOS) {
 				deny = append(deny, d)
 			}
 		}
@@ -169,11 +169,9 @@ func execute(o runOpts, cfg runConfig, child []string, stdout, stderr io.Writer)
 		fmt.Fprintf(stderr, "xrr run: %v\n", err)
 		return exitUsage
 	}
-	for _, name := range append(append([]string{}, o.shim...), cfg.Deny...) {
-		if err := writeShim(binDir, self, runDir, name); err != nil {
-			fmt.Fprintf(stderr, "xrr run: write shim %s: %v\n", name, err)
-			return exitUsage
-		}
+	if err := installShims(binDir, self, shimNames(o.shim, cfg.Deny, runtime.GOOS), runtime.GOOS); err != nil {
+		fmt.Fprintf(stderr, "xrr run: install shims: %v\n", err)
+		return exitUsage
 	}
 	if err := writeConfig(runDir, cfg); err != nil {
 		fmt.Fprintf(stderr, "xrr run: %v\n", err)
@@ -188,7 +186,7 @@ func execute(o runOpts, cfg runConfig, child []string, stdout, stderr io.Writer)
 	}
 	cmd := exec.Command(path, child[1:]...)
 	cmd.Args[0] = child[0]
-	cmd.Env = withEnv(os.Environ(), "PATH", binDir+string(os.PathListSeparator)+cfg.RealPath)
+	cmd.Env = withEnv(withEnv(os.Environ(), "PATH", binDir+string(os.PathListSeparator)+cfg.RealPath), runDirEnv, runDir)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, stdout, stderr
 	code := waitForwardingSignals(cmd, stderr)
 
@@ -211,27 +209,6 @@ func execute(o runOpts, cfg runConfig, child []string, stdout, stderr io.Writer)
 		return exitViolation
 	}
 	return exitOK
-}
-
-// writeShim writes an executable sh stub that re-enters this binary. The
-// run dir and binary are baked in, so the stub works under `env -i` and
-// from any cwd. POSIX sh only: Windows is not supported.
-func writeShim(binDir, self, runDir, name string) error {
-	body := fmt.Sprintf("#!/bin/sh\nexec %s shim %s %s \"$@\"\n", shQuote(self), shQuote(runDir), shQuote(name))
-	return os.WriteFile(filepath.Join(binDir, name), []byte(body), 0o755)
-}
-
-func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-
-// withEnv returns env with key set to val (replacing any existing entry).
-func withEnv(env []string, key, val string) []string {
-	out := make([]string, 0, len(env)+1)
-	for _, e := range env {
-		if !strings.HasPrefix(e, key+"=") {
-			out = append(out, e)
-		}
-	}
-	return append(out, key+"="+val)
 }
 
 // waitForwardingSignals runs cmd, relaying SIGINT/SIGTERM so the child can
