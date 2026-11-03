@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 )
 
 // Exit codes. A child's own non-zero exit code always wins over exitViolation.
@@ -48,11 +47,11 @@ func runAsShim(args []string, stderr io.Writer) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	runDir, name, ok := shimIdentity(exe, runtime.GOOS)
+	runDir, file, ok := shimIdentity(exe)
 	if !ok {
 		return 0, false
 	}
-	return shimMain(runDir, name, args, stderr), true
+	return shimMain(runDir, file, args, stderr), true
 }
 
 func dispatch(args []string, stdout, stderr io.Writer) int {

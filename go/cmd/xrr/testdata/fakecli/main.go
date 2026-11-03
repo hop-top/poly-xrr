@@ -17,7 +17,12 @@ import (
 
 func main() {
 	name := strings.ToLower(filepath.Base(os.Args[0]))
-	name = strings.TrimSuffix(name, ".exe")
+	for _, e := range []string{".exe", ".cmd", ".com", ".bat"} {
+		if strings.HasSuffix(name, e) {
+			name = strings.TrimSuffix(name, e)
+			break
+		}
+	}
 	switch name {
 	case "az":
 		fmt.Printf("az:%s\n", strings.Join(os.Args[1:], " "))
@@ -50,8 +55,13 @@ func call(env []string, bin string, args ...string) {
 }
 
 func suite(args []string) {
+	// "bin=<name>" makes the suite call <name> instead of az.
+	az := "az"
+	if len(args) > 0 && strings.HasPrefix(args[0], "bin=") {
+		az, args = strings.TrimPrefix(args[0], "bin="), args[1:]
+	}
 	if len(args) > 0 && args[0] == "noenv" {
-		bin, err := exec.LookPath("az")
+		bin, err := exec.LookPath(az)
 		if err != nil {
 			fmt.Println("lookpath:", err)
 			os.Exit(1)
@@ -67,8 +77,8 @@ func suite(args []string) {
 		fmt.Printf("XRR_RUN_DIR=%s\n", os.Getenv("XRR_RUN_DIR"))
 		return
 	}
-	call(nil, "az", "account", "show")
-	call(nil, "az", "fail")
+	call(nil, az, "account", "show")
+	call(nil, az, "fail")
 	if len(args) > 0 && args[0] == "deny" {
 		call(nil, "open", "x")
 	}

@@ -120,16 +120,23 @@ func (o runOpts) resolve(child []string) (runConfig, []string, error) {
 	if err != nil {
 		return cfg, nil, err
 	}
+	if err := checkCollisions(o.shim, o.deny); err != nil {
+		return cfg, nil, err
+	}
 	deny := append([]string{}, o.deny...)
 	if !o.noDefaultDeny {
 		for _, d := range defaultDeny {
-			if !inNames(o.shim, d, runtime.GOOS) && !inNames(deny, d, runtime.GOOS) {
+			if !inNames(o.shim, d) && !inNames(deny, d) {
 				deny = append(deny, d)
 			}
 		}
 	}
+	cmds := map[string]string{}
+	for _, n := range append(append([]string{}, o.shim...), deny...) {
+		cmds[shimFileName(n, runtime.GOOS)] = n
+	}
 	return runConfig{
-		Mode: mode, CassetteDir: abs, RealPath: os.Getenv("PATH"),
+		Cmds: cmds, Mode: mode, CassetteDir: abs, RealPath: os.Getenv("PATH"),
 		Strict: o.strict, Deny: deny, EnvCapture: o.env,
 		ScrubDeny: o.scrubDeny, ScrubAllow: o.scrubAllow,
 		StdinWaitMs: int(o.stdinWait / time.Millisecond),
@@ -169,7 +176,7 @@ func execute(o runOpts, cfg runConfig, child []string, stdout, stderr io.Writer)
 		fmt.Fprintf(stderr, "xrr run: %v\n", err)
 		return exitUsage
 	}
-	if err := installShims(binDir, self, shimNames(o.shim, cfg.Deny, runtime.GOOS), runtime.GOOS); err != nil {
+	if err := installShims(binDir, self, append(append([]string{}, o.shim...), cfg.Deny...), runtime.GOOS); err != nil {
 		fmt.Fprintf(stderr, "xrr run: install shims: %v\n", err)
 		return exitUsage
 	}
