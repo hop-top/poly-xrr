@@ -1,0 +1,19 @@
+name: goreleaser
+
+# Prebuilt xrr CLI binaries, attached to the go component's release.
+# Tag shape matches release-please: xrr/v<version> (the `xrr/` prefix does
+# not match the xrr-ts/, xrr-py/, xrr-rs/, xrr-php/ component tags).
+
+on:
+  push:
+    tags: ['xrr/v*']
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    uses: hop-top/.github/.github/workflows/goreleaser-on-tag.yml@v0
+    secrets:
+      RELEASE_BOT_APP_ID: ${{ secrets.RELEASE_BOT_APP_ID }}
+      RELEASE_BOT_PRIVATE_KEY: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}

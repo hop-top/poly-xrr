@@ -29,6 +29,7 @@ const usageText = `usage: xrr <command> [flags]
 
 commands:
   run    run a command with PATH shims that record/replay external CLIs
+  version  print the xrr version (also --version)
 
 run 'xrr run -h' for flags.
 `
@@ -62,6 +63,9 @@ func dispatch(args []string, stdout, stderr io.Writer) int {
 	switch args[0] {
 	case "run":
 		return runCmd(args[1:], stdout, stderr)
+	case "-v", "--version", "version":
+		fmt.Fprintf(stdout, "xrr %s\n", resolveVersion())
+		return exitOK
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usageText)
 		return exitOK
