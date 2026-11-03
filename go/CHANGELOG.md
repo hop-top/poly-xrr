@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.0-alpha.6](https://github.com/hop-top/poly-xrr/compare/xrr/v0.1.0-alpha.5...xrr/v0.1.0-alpha.6) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **xrr:** cassette argv[0] for shims is lowercased with one .exe/.com/.bat/.cmd suffix stripped on every OS; posix cassettes recorded with uppercase or extension-bearing shim names no longer match.
+* **go:** cassettes whose fingerprinted fields contain `&`, `<` or `>` (any adapter), or U+2028/U+2029 (stream identities), re-fingerprint under RFC 8785 escaping; re-record them.
+
+### Features
+
+* **go:** xrr run — PATH-shim exec record/replay with deny list ([608daed](https://github.com/hop-top/poly-xrr/commit/608daedb748b6a3ee83e316c766006058b24f95d))
+* **go:** xrr run layered config + env scrub lists ([c636e9f](https://github.com/hop-top/poly-xrr/commit/c636e9fb1d91ef2b47059b4149a831913ed8596d))
+* **xrr:** os-independent cassette names for shim commands ([bfa3d4c](https://github.com/hop-top/poly-xrr/commit/bfa3d4cd3e139260422035b6967179d65fe87c76))
+* **xrr:** prebuilt cli binaries on release ([27f9eec](https://github.com/hop-top/poly-xrr/commit/27f9eec37ba52d656387213f6abf7974ce49d86a))
+* **xrr:** xrr run on windows via argv[0]-dispatched shim binaries ([d5e8a80](https://github.com/hop-top/poly-xrr/commit/d5e8a801db70b7b0cf23f5539b7bc575d7a9d80e))
+
+
+### Bug Fixes
+
+* canonicalize fingerprint JSON per RFC 8785 across ports ([791ccc7](https://github.com/hop-top/poly-xrr/commit/791ccc7e3cf792a0dc5c06c179b9a72ad550d509))
+* gate fs dest on the normalized value in Go and Python ([#52](https://github.com/hop-top/poly-xrr/issues/52)) ([4fad662](https://github.com/hop-top/poly-xrr/commit/4fad6628dc08af8dd27a44ee5637544a12e07835))
+* **go:** canonicalize fingerprint JSON per RFC 8785 ([4a3b6aa](https://github.com/hop-top/poly-xrr/commit/4a3b6aaf0a7dbf34a306ffa7efd2ba47a559f858))
+* **go:** xrr run shims never block on idle inherited stdin ([ee7ba40](https://github.com/hop-top/poly-xrr/commit/ee7ba40c84ba7bdd13d27331e62568b4147ef4d3))
+* **xrr:** ci portability for lookup test and windows config tests ([fff91a9](https://github.com/hop-top/poly-xrr/commit/fff91a9c26fedab5826401650c94562ca481fb45))
+
 ## [0.1.0-alpha.5](https://github.com/hop-top/poly-xrr/compare/xrr/v0.1.0-alpha.4...xrr/v0.1.0-alpha.5) (2026-08-30)
 
 
