@@ -85,13 +85,17 @@ func union(a, b []string) []string {
 }
 
 // userConfigPath is $XDG_CONFIG_HOME/xrr/config.yaml, else
-// ~/.config/xrr/config.yaml. Empty when neither base can be determined.
+// ~/.config/xrr/config.yaml, else (Windows, where HOME is normally unset)
+// %APPDATA%\xrr\config.yaml. Empty when no base can be determined.
 func userConfigPath(getenv func(string) string) string {
 	if x := getenv("XDG_CONFIG_HOME"); x != "" {
 		return filepath.Join(x, filepath.FromSlash(userConfigRel))
 	}
 	if h := getenv("HOME"); h != "" {
 		return filepath.Join(h, ".config", filepath.FromSlash(userConfigRel))
+	}
+	if a := getenv("APPDATA"); a != "" {
+		return filepath.Join(a, filepath.FromSlash(userConfigRel))
 	}
 	return ""
 }

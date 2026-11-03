@@ -3,6 +3,7 @@
 // behaviour is picked by the name it was started under, minus any extension:
 //
 //	az     prints "az:<args>" to stdout, "az-err" to stderr; first arg "fail" exits 3
+//	true   exits 0
 //	suite  calls `az account show`, `az fail`, and with arg "deny" also `open x`;
 //	       arg "noenv" calls az with an empty environment
 package main
@@ -30,6 +31,7 @@ func main() {
 		if len(os.Args) > 1 && os.Args[1] == "fail" {
 			os.Exit(3)
 		}
+	case "true": // OS-neutral stand-in for /usr/bin/true
 	case "suite":
 		suite(os.Args[1:])
 	default:

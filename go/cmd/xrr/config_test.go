@@ -143,9 +143,10 @@ func TestConfigPrecedenceFlagsEnvProjectUser(t *testing.T) {
 	writeFile(t, filepath.Join(xdg, "xrr", "config.yaml"), "mode: record\nstrict: false\nreport_file: user.json\n")
 	writeFile(t, filepath.Join(proj, ".xrr.yaml"), "mode: replay\nshim: [az]\ncassettes: cass\n")
 	require.NoError(t, os.Mkdir(filepath.Join(proj, "cass"), 0o755))
+	trueCmd := fakeCLI(t, t.TempDir(), "true")
 	run := func(env []string, args ...string) result {
 		return xrrRunSpec(t, runSpec{path: sysPath, dir: proj, env: append([]string{"XDG_CONFIG_HOME=" + xdg}, env...)},
-			append([]string{"run"}, append(args, "--", "true")...)...)
+			append([]string{"run"}, append(args, "--", trueCmd)...)...)
 	}
 	// project beats user: replay, not record
 	assert.Contains(t, run(nil).stderr, "xrr run: replay")
@@ -260,7 +261,7 @@ func TestConfigErrors(t *testing.T) {
 func TestConfigEmptyFileIsFine(t *testing.T) {
 	proj := t.TempDir()
 	writeFile(t, filepath.Join(proj, ".xrr.yaml"), "")
-	r := xrrRunSpec(t, runSpec{path: sysPath, dir: proj}, "run", "--mode", "passthrough", "--", "true")
+	r := xrrRunSpec(t, runSpec{path: sysPath, dir: proj}, "run", "--mode", "passthrough", "--", fakeCLI(t, t.TempDir(), "true"))
 	assert.Equal(t, 0, r.code, r.stderr)
 }
 
@@ -284,4 +285,13 @@ func TestMergeSettings(t *testing.T) {
 	assert.True(t, *m.Strict)
 	assert.False(t, *m.NoDefaultDeny)
 	assert.Equal(t, []string{"a", "b", "c"}, m.Deny)
+}
+
+func TestUserConfigPath(t *testing.T) {
+	env := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	j := filepath.Join
+	assert.Equal(t, j("x", "xrr", "config.yaml"), userConfigPath(env(map[string]string{"XDG_CONFIG_HOME": "x", "HOME": "h", "APPDATA": "a"})))
+	assert.Equal(t, j("h", ".config", "xrr", "config.yaml"), userConfigPath(env(map[string]string{"HOME": "h", "APPDATA": "a"})))
+	assert.Equal(t, j("a", "xrr", "config.yaml"), userConfigPath(env(map[string]string{"APPDATA": "a"})), "Windows without HOME/XDG")
+	assert.Equal(t, "", userConfigPath(env(nil)))
 }
