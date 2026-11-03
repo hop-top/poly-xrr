@@ -22,7 +22,8 @@ cd go && go build -o ~/.local/bin/xrr ./cmd/xrr     # from a checkout
 go install hop.top/xrr/cmd/xrr@latest               # or via the module
 ```
 
-POSIX only (shims are `sh` stubs).
+Linux, macOS and Windows. Shims are the same on every OS (see
+[How shims work](#how-shims-work)).
 
 ## Usage
 
@@ -139,6 +140,37 @@ Cassettes pass through the same redaction as every xrr adapter
 - Existing field rule: a value matching a vendor pattern inside `stdout`
   replaces the whole field.
 
+## How shims work
+
+For every `--shim` and denied command, `xrr run` makes a temp run dir
+`xrr-run-*/` with a `bin/` that is prepended to `PATH`. Each file in `bin/`
+is a **hardlink of the xrr binary itself** (a copy when linking fails, e.g.
+across volumes), named `<cmd>` or, on Windows, `<cmd>.exe`. No `sh` stubs,
+no `.cmd` stubs (quoting bugs; `CreateProcess` does not find them).
+
+When xrr starts from `<run-dir>/bin/<name>` it acts as the shim for
+`<name>`; located anywhere else it is the normal CLI, whatever its file name.
+The name it was started under is the command (argv[0]); the run dir is
+found relative to the executable path, and holds `config.json` and the call
+log. So shims need no environment and work under `env -i`, from any cwd.
+`XRR_RUN_DIR` is also exported to the wrapped command (informational; the
+shims do not depend on it, which is what keeps `env -i` working).
+
+Hardlink, not symlink: `os.Executable` resolves symlinks on Linux, which
+would lose the shim's name. Hardlink is tried first, then copy.
+
+Windows specifics:
+
+- `PATH` is joined with `;`; the variable is matched case-insensitively
+  (`Path`).
+- The real binary is looked up in the original `PATH` per directory, trying
+  each `PATHEXT` extension (default `.COM;.EXE;.BAT;.CMD`), so `az.cmd`
+  works. The shim, being `az.exe`, wins because its directory is first.
+- Command names are case-insensitive and `.exe` is not part of the name:
+  `--shim AZ.exe` is `az`; cassettes record `az` as argv[0].
+- Extra default-deny entries: `rundll32.exe mshta.exe clip.exe msg.exe
+  wscript.exe cscript.exe` (besides `explorer.exe`).
+
 ## Behaviour and limits
 
 - Matching is by `argv` + `stdin` only. The same call twice replays the same
@@ -146,6 +178,15 @@ Cassettes pass through the same redaction as every xrr adapter
 - Only commands resolved through `PATH` are shimmed. `/usr/bin/open x` or a
   hard-coded absolute path bypasses the shim. The wrapped `<cmd>` itself is
   resolved from the original `PATH` and is not shimmed.
+- Windows: `cmd.exe` builtins (`start`, `echo`, ...) and PowerShell cmdlets
+  (`Start-Process`, `Invoke-Item`) are not executables on `PATH`, so they
+  cannot be shimmed or denied. `start https://x` still opens a browser.
+  Shimming only helps for real programs found via `PATH`.
+- Cross-OS cassettes: the format is unchanged, so POSIX recordings replay on
+  Windows and back. Fingerprints cover `argv` and `stdin` byte for byte, so
+  differences in them miss: path-shaped arguments (`C:\x` vs `/x`) and
+  stdin line endings (`\r\n` vs `\n`). Recorded stdout/stderr replays
+  verbatim, including any `\r\n` the real tool produced on Windows.
 - Commands a real binary spawns itself (`az` calling `python`) run unshimmed
   and are part of that one recorded call.
 - stdin: replay must read stdin to pick a cassette. An inherited pipe that is

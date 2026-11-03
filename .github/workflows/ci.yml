@@ -23,6 +23,21 @@ jobs:
         working-directory: go
         run: go test ./...
 
+  go-windows:
+    name: Go (Windows, xrr run)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Vet
+        working-directory: go
+        run: go vet ./cmd/xrr/...
+      - name: Test (xrr CLI; sh-based tests skip)
+        working-directory: go
+        run: go test -count=1 ./cmd/xrr/...
+
   ts:
     name: TypeScript
     runs-on: ubuntu-latest

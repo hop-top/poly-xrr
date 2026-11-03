@@ -14,10 +14,14 @@ import (
 var defaultDeny = []string{
 	"open", "xdg-open", "wslview", "explorer.exe", "start",
 	"sendmail", "mail", "osascript", "say", "pbcopy", "notify-send",
+	// Windows: launchers, script hosts, clipboard, popups. Matched without
+	// the extension on Windows ("rundll32" is "rundll32.exe").
+	"rundll32.exe", "mshta.exe", "clip.exe", "msg.exe", "wscript.exe", "cscript.exe",
 }
 
 // runConfig is written once by `xrr run` and read by every shim process.
-// It lives in the run dir so shims need no env vars and survive `env -i`.
+// It lives in the run dir, found relative to the shim executable, so shims
+// need no env vars and survive `env -i`.
 type runConfig struct {
 	Mode        string   `json:"mode"` // record | replay | passthrough
 	CassetteDir string   `json:"cassette_dir,omitempty"`
