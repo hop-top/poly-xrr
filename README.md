@@ -193,6 +193,10 @@ xrr-aware binary: `xrr run --shim az,op -- bats test/` shims them on `PATH`,
 records/replays exec cassettes, and blocks side-effect commands (`open`,
 `osascript`, ...). See [docs/xrr-run.md](docs/xrr-run.md).
 
+Install: prebuilt binaries with checksums on the `xrr/v*` releases, or
+`go install hop.top/xrr/cmd/xrr@latest`; see
+[Install](docs/xrr-run.md#install).
+
 ## Cross-process e2e (XRR_MODE + XRR_CASSETTE_DIR)
 
 For test suites that shell out to a compiled binary and assert on its

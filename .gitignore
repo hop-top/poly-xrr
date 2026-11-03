@@ -17,3 +17,6 @@ php/README.md
 .idea/
 .vscode/
 *.swp
+
+# goreleaser output
+/dist/

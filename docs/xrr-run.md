@@ -17,9 +17,29 @@ fingerprint over `{argv, stdin}`; see
 
 ## Install
 
+Prebuilt binaries (linux, darwin, windows; amd64, arm64) are attached to each
+`xrr/v<version>` release together with a sha256 `checksums.txt`. Pick the
+version from the [releases page](https://github.com/hop-top/poly-xrr/releases)
+(entries tagged `xrr/v...`; the other components release separately, so
+GitHub's "latest" is not reliable here):
+
 ```sh
+VERSION=0.1.0-alpha.5        # release xrr/v$VERSION
+OS=linux ARCH=amd64          # linux|darwin, amd64|arm64
+BASE=https://github.com/hop-top/poly-xrr/releases/download/xrr/v$VERSION
+FILE=xrr_${VERSION}_${OS}_${ARCH}.tar.gz
+
+curl -fsSLO "$BASE/$FILE" -O "$BASE/checksums.txt"
+grep " $FILE\$" checksums.txt | sha256sum -c -     # macOS: shasum -a 256 -c -
+tar -xzf "$FILE" xrr && install -m 0755 xrr ~/.local/bin/xrr
+xrr --version
+```
+
+Windows archives are `.zip` (`xrr.exe` inside). From source:
+
+```sh
+go install hop.top/xrr/cmd/xrr@latest               # via the module
 cd go && go build -o ~/.local/bin/xrr ./cmd/xrr     # from a checkout
-go install hop.top/xrr/cmd/xrr@latest               # or via the module
 ```
 
 Linux, macOS and Windows. Shims are the same on every OS (see
