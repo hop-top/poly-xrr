@@ -89,7 +89,7 @@ Sources, highest first:
 | 1 | flags | Only flags actually passed count. |
 | 2 | environment | `XRR_*`, see below. Empty = unset. |
 | 3 | project file | `./.xrr.yaml` (cwd only, no parent lookup), or `--config FILE`. |
-| 4 | user file | `$XDG_CONFIG_HOME/xrr/config.yaml`, default `~/.config/xrr/config.yaml`. |
+| 4 | user file | `$XDG_CONFIG_HOME/xrr/config.yaml`, default `~/.config/xrr/config.yaml`; with neither `XDG_CONFIG_HOME` nor `HOME` set (Windows), `%APPDATA%\xrr\config.yaml`. |
 
 Missing default files are ignored; a missing `--config` file is an error.
 
