@@ -23,15 +23,16 @@ var defaultDeny = []string{
 // It lives in the run dir, found relative to the shim executable, so shims
 // need no env vars and survive `env -i`.
 type runConfig struct {
-	Mode        string   `json:"mode"` // record | replay | passthrough
-	CassetteDir string   `json:"cassette_dir,omitempty"`
-	RealPath    string   `json:"real_path"` // PATH as it was before shims
-	Strict      bool     `json:"strict"`
-	Deny        []string `json:"deny"`
-	EnvCapture  []string `json:"env_capture,omitempty"`
-	ScrubDeny   []string `json:"scrub_deny,omitempty"`  // env names always scrubbed
-	ScrubAllow  []string `json:"scrub_allow,omitempty"` // env names never scrubbed
-	StdinWaitMs int      `json:"stdin_wait_ms"`         // replay: idle limit when reading stdin
+	Mode        string            `json:"mode"` // record | replay | passthrough
+	CassetteDir string            `json:"cassette_dir,omitempty"`
+	RealPath    string            `json:"real_path"` // PATH as it was before shims
+	Strict      bool              `json:"strict"`
+	Deny        []string          `json:"deny"`
+	EnvCapture  []string          `json:"env_capture,omitempty"`
+	ScrubDeny   []string          `json:"scrub_deny,omitempty"`  // env names always scrubbed
+	ScrubAllow  []string          `json:"scrub_allow,omitempty"` // env names never scrubbed
+	Cmds        map[string]string `json:"cmds,omitempty"`        // shim file name -> configured command name
+	StdinWaitMs int               `json:"stdin_wait_ms"`         // replay: idle limit when reading stdin
 }
 
 const (
@@ -39,6 +40,22 @@ const (
 	callsFile  = "calls.jsonl"
 	binSubdir  = "bin"
 )
+
+// cmdFor is the configured command name behind a shim file name. Windows
+// file names are case-insensitive. An unknown file stands for itself.
+func (c runConfig) cmdFor(file, goos string) string {
+	if n, ok := c.Cmds[file]; ok {
+		return n
+	}
+	if isWindows(goos) {
+		for f, n := range c.Cmds {
+			if strings.EqualFold(f, file) {
+				return n
+			}
+		}
+	}
+	return file
+}
 
 func writeConfig(runDir string, c runConfig) error {
 	b, err := json.Marshal(c)

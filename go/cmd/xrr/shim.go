@@ -18,21 +18,24 @@ import (
 
 // shimMain is the entrypoint of a shim process: the binary started from
 // <run-dir>/bin under a command's name (see shimIdentity).
-func shimMain(runDir, name string, args []string, stderr io.Writer) int {
+func shimMain(runDir, file string, args []string, stderr io.Writer) int {
 	cfg, err := loadConfig(runDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "xrr shim %s: %v\n", name, err)
+		fmt.Fprintf(stderr, "xrr shim %s: %v\n", file, err)
 		return exitUsage
 	}
+	bin := cfg.cmdFor(file, runtime.GOOS)
+	name := cassetteName(bin)
 	rd := xrr.NewRedactor(xrr.RedactConfigFromEnv())
-	return (&shim{cfg: cfg, runDir: runDir, name: name, args: args, stderr: stderr,
+	return (&shim{cfg: cfg, runDir: runDir, name: name, bin: bin, args: args, stderr: stderr,
 		rd: rd, env: collectEnvSecrets(rd, os.Environ(), cfg.ScrubDeny, cfg.ScrubAllow)}).run()
 }
 
 type shim struct {
 	cfg    runConfig
 	runDir string
-	name   string
+	name   string // cassette name: argv[0] in cassettes, deny matching, reports
+	bin    string // command as configured: what is looked up on the original PATH
 	args   []string
 	stderr io.Writer
 	rd     *xrr.Redactor
@@ -53,7 +56,7 @@ func (s *shim) log(outcome, fp string, code int, detail string) {
 }
 
 func (s *shim) run() int {
-	if inNames(s.cfg.Deny, s.name, runtime.GOOS) {
+	if inNames(s.cfg.Deny, s.name) {
 		fmt.Fprintf(s.stderr, "xrr: denied: %s (side-effect command blocked by xrr run; real binary not executed)\n",
 			strings.Join(s.safeArgv(), " "))
 		s.log(outDenied, "", exitDenied, "blocked, real binary not executed")
@@ -191,12 +194,12 @@ var errNotFound = errors.New("real binary not found")
 // WaitDelay cannot interrupt a blocked source read. tee, when set,
 // receives a copy of every byte that reaches the child.
 func (s *shim) execReal(in io.Reader, tee io.Writer, out, errw io.Writer) (int, error) {
-	path, ok := lookPathIn(s.name, s.cfg.RealPath, runtime.GOOS, os.Getenv("PATHEXT"))
+	path, ok := lookPathIn(s.bin, s.cfg.RealPath, runtime.GOOS, os.Getenv("PATHEXT"))
 	if !ok {
 		return exitNotFound, errNotFound
 	}
 	cmd := exec.Command(path, s.args...)
-	cmd.Args[0] = s.name
+	cmd.Args[0] = s.bin
 	cmd.Env = withEnv(os.Environ(), "PATH", s.cfg.RealPath)
 	cmd.Stdout, cmd.Stderr = out, errw
 	// A child that exits leaving stdout/stderr open (daemonised grandchild)

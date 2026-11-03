@@ -11,46 +11,56 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCanonName(t *testing.T) {
-	cases := []struct{ in, goos, want string }{
-		{"az", "linux", "az"},
-		{"az.exe", "linux", "az.exe"}, // POSIX: literal name
-		{"Az", "darwin", "Az"},
-		{"az.exe", "windows", "az"},
-		{"AZ.EXE", "windows", "az"},
-		{"az.cmd", "windows", "az"},
-		{"Explorer.exe", "windows", "explorer"},
-		{"az", "windows", "az"},
-		{"my.tool", "windows", "my.tool"},
+func TestShimNameTable(t *testing.T) {
+	cases := []struct{ in, win, posix, cassette string }{
+		{"az", "az.exe", "az", "az"},
+		{"AZ", "AZ.exe", "AZ", "az"},
+		{"az.exe", "az.exe", "az.exe", "az"},
+		{"az.CMD", "az.CMD.exe", "az.CMD", "az"},
+		{"foo.bat", "foo.bat.exe", "foo.bat", "foo"},
+		{"explorer.exe", "explorer.exe", "explorer.exe", "explorer"},
+		{"Explorer.EXE", "Explorer.EXE", "Explorer.EXE", "explorer"},
+		{"kubectl.v2", "kubectl.v2.exe", "kubectl.v2", "kubectl.v2"},
+		{"foo.exe.exe", "foo.exe.exe", "foo.exe.exe", "foo.exe"}, // one extension only
+		{".exe", ".exe", ".exe", ".exe"},                         // nothing left to strip to
 	}
 	for _, c := range cases {
-		assert.Equal(t, c.want, canonName(c.in, c.goos), "%s on %s", c.in, c.goos)
+		assert.Equal(t, c.win, shimFileName(c.in, "windows"), "windows file %q", c.in)
+		assert.Equal(t, c.posix, shimFileName(c.in, "linux"), "posix file %q", c.in)
+		assert.Equal(t, c.cassette, cassetteName(c.in), "cassette %q", c.in)
 	}
 }
 
-func TestShimFileName(t *testing.T) {
-	assert.Equal(t, "az", shimFileName("az", "linux"))
-	assert.Equal(t, "explorer.exe", shimFileName("explorer.exe", "darwin"))
-	assert.Equal(t, "az.exe", shimFileName("az", "windows"))
-	assert.Equal(t, "az.exe", shimFileName("AZ.exe", "windows"))
-	assert.Equal(t, "explorer.exe", shimFileName("explorer.exe", "windows"), "no double extension")
-}
-
-func TestInNames(t *testing.T) {
+func TestInNamesByCassetteName(t *testing.T) {
 	list := []string{"open", "explorer.exe"}
-	assert.True(t, inNames(list, "explorer", "windows"))
-	assert.True(t, inNames(list, "Explorer.EXE", "windows"))
-	assert.False(t, inNames(list, "explorer", "linux"))
-	assert.True(t, inNames(list, "explorer.exe", "linux"))
-	assert.False(t, inNames(list, "OPEN", "linux"), "POSIX is case-sensitive")
-	assert.True(t, inNames(list, "OPEN", "windows"))
+	assert.True(t, inNames(list, "explorer"))
+	assert.True(t, inNames(list, "Explorer.EXE"))
+	assert.True(t, inNames(list, "OPEN"))
+	assert.False(t, inNames(list, "opener"))
 }
 
-func TestShimNamesDedupe(t *testing.T) {
-	got := shimNames([]string{"az", "AZ", "op"}, []string{"explorer.exe", "az.exe"}, "windows")
-	assert.Equal(t, []string{"az", "op", "explorer.exe"}, got)
-	got = shimNames([]string{"az", "AZ"}, nil, "linux")
-	assert.Equal(t, []string{"az", "AZ"}, got)
+func TestCheckCollisions(t *testing.T) {
+	assert.NoError(t, checkCollisions([]string{"az", "op"}, []string{"open"}))
+	assert.NoError(t, checkCollisions([]string{"az", "az"}, nil), "same entry twice is not a collision")
+	for _, c := range []struct{ shim, deny []string }{
+		{[]string{"foo", "foo.exe"}, nil},
+		{[]string{"AZ", "az"}, nil},
+		{[]string{"az"}, []string{"az.CMD"}},
+		{[]string{"az"}, []string{"az"}},
+	} {
+		err := checkCollisions(c.shim, c.deny)
+		require.Error(t, err, "%v %v", c.shim, c.deny)
+		all := append(append([]string{}, c.shim...), c.deny...)
+		assert.Contains(t, err.Error(), `"`+all[0]+`"`)
+		assert.Contains(t, err.Error(), `"`+all[1]+`"`)
+	}
+}
+
+func TestShimCmdLookup(t *testing.T) {
+	cfg := runConfig{Cmds: map[string]string{"AZ.exe": "AZ", "az.CMD": "az.CMD"}}
+	assert.Equal(t, "AZ", cfg.cmdFor("AZ.exe", "linux"))
+	assert.Equal(t, "AZ", cfg.cmdFor("az.exe", "windows"), "windows file names are case-insensitive")
+	assert.Equal(t, "az.exe", cfg.cmdFor("az.exe", "linux"), "unknown file falls back to its own name")
 }
 
 func touch(t *testing.T, p string) {
@@ -137,18 +147,14 @@ func mkRunDir(t *testing.T) (runDir, binDir string) {
 func TestShimIdentity(t *testing.T) {
 	runDir, binDir := mkRunDir(t)
 
-	rd, name, ok := shimIdentity(filepath.Join(binDir, "az"), "linux")
+	rd, name, ok := shimIdentity(filepath.Join(binDir, "az"))
 	assert.True(t, ok)
 	assert.Equal(t, runDir, rd)
 	assert.Equal(t, "az", name)
 
-	_, name, ok = shimIdentity(filepath.Join(binDir, "AZ.EXE"), "windows")
+	_, name, ok = shimIdentity(filepath.Join(binDir, "AZ.EXE"))
 	assert.True(t, ok)
-	assert.Equal(t, "az", name)
-
-	_, name, ok = shimIdentity(filepath.Join(binDir, "explorer.exe"), "linux")
-	assert.True(t, ok)
-	assert.Equal(t, "explorer.exe", name)
+	assert.Equal(t, "AZ.EXE", name, "the file name, as is")
 
 	// the real CLI, wherever else it lives, is never a shim
 	for _, p := range []string{
@@ -156,7 +162,7 @@ func TestShimIdentity(t *testing.T) {
 		filepath.Join(t.TempDir(), "bin", "xrr"), // bin/ but no run dir
 		filepath.Join(t.TempDir(), "xrr"),
 	} {
-		_, _, ok = shimIdentity(p, "linux")
+		_, _, ok = shimIdentity(p)
 		assert.False(t, ok, p)
 	}
 
@@ -164,12 +170,12 @@ func TestShimIdentity(t *testing.T) {
 	other := filepath.Join(t.TempDir(), "elsewhere")
 	require.NoError(t, os.MkdirAll(filepath.Join(other, binSubdir), 0o755))
 	require.NoError(t, writeConfig(other, runConfig{}))
-	_, _, ok = shimIdentity(filepath.Join(other, binSubdir, "az"), "linux")
+	_, _, ok = shimIdentity(filepath.Join(other, binSubdir, "az"))
 	assert.False(t, ok)
 
 	// right layout, config missing
 	require.NoError(t, os.Remove(filepath.Join(runDir, configFile)))
-	_, _, ok = shimIdentity(filepath.Join(binDir, "az"), "linux")
+	_, _, ok = shimIdentity(filepath.Join(binDir, "az"))
 	assert.False(t, ok)
 }
 
@@ -261,7 +267,10 @@ func exeExt() string {
 func fakeCLI(t *testing.T, dir, name string) string {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0o755))
-	dst := filepath.Join(dir, name+exeExt())
+	if exeExt() != "" && !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		name += exeExt()
+	}
+	dst := filepath.Join(dir, name)
 	require.NoError(t, copyExec(fakeBin, dst))
 	return dst
 }
@@ -336,4 +345,39 @@ func TestInstallShimsFromSymlinkedSelf(t *testing.T) {
 	fi, err := os.Lstat(filepath.Join(bin, "az"))
 	require.NoError(t, err)
 	assert.Zero(t, fi.Mode()&os.ModeSymlink, "shim must be a real file, not a link to a link")
+}
+
+// Cassette names are the same on every OS: a cassette recorded under one
+// spelling of a shim replays under another, with no real binary. The suite
+// calls the command by the spelling the shim was configured with.
+func TestNativeCassetteNameIsSpellingIndependent(t *testing.T) {
+	suite := fakeCLI(t, t.TempDir(), "suite")
+	fp := fingerprintOf(t, []string{"az", "account", "show"})
+	pairs := []struct{ rec, rep string }{
+		{"az.exe", "az"}, {"az", "az.exe"}, {"az", "AZ.EXE"}, {"AZ", "az"}, {"az.exe", "AZ"},
+	}
+	for _, p := range pairs {
+		realbin := t.TempDir()
+		fakeCLI(t, realbin, p.rec)
+		cass := filepath.Join(t.TempDir(), "cassettes")
+		rec := xrrRun(t, realbin, nativeEnv(), "run", "--mode", "record", "--cassettes", cass, "--shim", p.rec, "--", suite, "bin="+p.rec)
+		require.Equal(t, 0, rec.code, "%v: %s", p, rec.stderr)
+		assert.FileExists(t, filepath.Join(cass, "exec-"+fp+".req.yaml"), "%v: argv[0] is the bare cassette name", p)
+		rep := xrrRun(t, "", nativeEnv(), "run", "--mode", "replay", "--cassettes", cass, "--shim", p.rep, "--", suite, "bin="+p.rep)
+		require.Equal(t, 0, rep.code, "%v: %s", p, rep.stderr)
+		assert.Equal(t, normNL(rec.stdout), normNL(rep.stdout), "%v", p)
+	}
+}
+
+func TestShimCollisionIsUsageError(t *testing.T) {
+	cass := t.TempDir()
+	for _, args := range [][]string{
+		{"--shim", "foo,foo.exe"},
+		{"--shim", "AZ,az"},
+		{"--shim", "az", "--deny", "az.cmd"},
+	} {
+		r := xrrRun(t, "", nil, append(append([]string{"run", "--mode", "replay", "--cassettes", cass}, args...), "--", "x")...)
+		assert.Equal(t, 2, r.code, "%v: %s", args, r.stderr)
+		assert.Contains(t, r.stderr, "same command", "%v", args)
+	}
 }

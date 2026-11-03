@@ -159,6 +159,28 @@ shims do not depend on it, which is what keeps `env -i` working).
 Hardlink, not symlink: `os.Executable` resolves symlinks on Linux, which
 would lose the shim's name. Hardlink is tried first, then copy.
 
+Two names per command, kept apart:
+
+- **Shim file name** (OS-specific): the `--shim`/`--deny` name as given, plus
+  `.exe` on Windows unless it already ends in `.exe`. On POSIX
+  `--shim explorer.exe` makes a file literally named `explorer.exe`, so
+  WSL-style calls are still found on `PATH`. The real binary is looked up by
+  the name as given.
+- **Cassette name** (same on every OS): the configured name with one trailing
+  `.exe`/`.com`/`.bat`/`.cmd` removed, then lowercased. It is the argv[0]
+  stored in cassettes, used for fingerprints, deny matching and reports.
+  `AZ`, `az` and `az.exe` all record as `az`; `kubectl.v2` stays
+  `kubectl.v2`. So `--shim foo.exe` and `--shim foo` use the same cassettes
+  on Windows, macOS and Linux.
+
+Two entries (shim and/or deny, from flags, env or config) with the same
+cassette name, e.g. `foo` + `foo.exe` or `AZ` + `az`, are a usage error
+(exit 2) naming both.
+
+Behaviour change: before this, POSIX kept the name literally. Cassettes
+recorded on macOS/Linux with an uppercase or extension-bearing shim name no
+longer match; re-record them.
+
 Windows specifics:
 
 - `PATH` is joined with `;`; the variable is matched case-insensitively
@@ -166,8 +188,6 @@ Windows specifics:
 - The real binary is looked up in the original `PATH` per directory, trying
   each `PATHEXT` extension (default `.COM;.EXE;.BAT;.CMD`), so `az.cmd`
   works. The shim, being `az.exe`, wins because its directory is first.
-- Command names are case-insensitive and `.exe` is not part of the name:
-  `--shim AZ.exe` is `az`; cassettes record `az` as argv[0].
 - Extra default-deny entries: `rundll32.exe mshta.exe clip.exe msg.exe
   wscript.exe cscript.exe` (besides `explorer.exe`).
 

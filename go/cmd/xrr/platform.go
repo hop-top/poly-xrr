@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -22,17 +23,17 @@ const (
 
 func isWindows(goos string) bool { return goos == "windows" }
 
-// exeExts are stripped from command names on Windows.
+// exeExts are stripped from command names (one, at most) to form the
+// cassette name.
 var exeExts = []string{".exe", ".com", ".bat", ".cmd"}
 
-// canonName is the identity of a command name. On Windows names are
-// case-insensitive and an executable extension is not part of the command
-// ("az.exe" is "az"); elsewhere the name is literal. Cassettes carry the
-// canonical name as argv[0], so they replay across OSes.
-func canonName(name, goos string) string {
-	if !isWindows(goos) {
-		return name
-	}
+// cassetteName is the identity of a configured command: the name that is
+// stored as argv[0] in cassettes, fingerprinted, matched against the deny
+// list and shown in reports. One trailing executable extension is dropped
+// and the rest lowercased, on every OS, so "AZ", "az" and "az.exe" are the
+// same command and cassettes replay across OSes. A name that is nothing but
+// an extension, or has a non-executable suffix ("kubectl.v2"), keeps it.
+func cassetteName(name string) string {
 	n := strings.ToLower(name)
 	for _, e := range exeExts {
 		if strings.HasSuffix(n, e) && len(n) > len(e) {
@@ -42,40 +43,53 @@ func canonName(name, goos string) string {
 	return n
 }
 
-// shimFileName is the file name of name's shim in the bin dir.
+// shimFileName is the file name of a configured command's shim in the bin
+// dir: the name as given, plus ".exe" on Windows unless already there.
 func shimFileName(name, goos string) string {
-	if isWindows(goos) {
-		return canonName(name, goos) + ".exe"
+	if isWindows(goos) && !strings.HasSuffix(strings.ToLower(name), ".exe") {
+		return name + ".exe"
 	}
 	return name
 }
 
-func inNames(list []string, name, goos string) bool {
-	c := canonName(name, goos)
+// inNames reports whether name is one of list, compared by cassette name.
+func inNames(list []string, name string) bool {
+	c := cassetteName(name)
 	for _, x := range list {
-		if canonName(x, goos) == c {
+		if cassetteName(x) == c {
 			return true
 		}
 	}
 	return false
 }
 
-// shimNames merges the shim and deny lists, one entry per distinct command.
-func shimNames(shim, deny []string, goos string) []string {
-	var out []string
-	for _, n := range append(append([]string{}, shim...), deny...) {
-		if !inNames(out, n, goos) {
-			out = append(out, n)
+// checkCollisions rejects configured commands that reduce to the same
+// cassette name: two shims ("foo", "foo.exe"), or a shim that is also
+// denied. The same entry repeated within one list is harmless.
+func checkCollisions(shim, deny []string) error {
+	type seen struct{ entry, list string }
+	byName := map[string]seen{}
+	for _, l := range []struct {
+		name    string
+		entries []string
+	}{{"shim", shim}, {"deny", deny}} {
+		for _, e := range l.entries {
+			c := cassetteName(e)
+			if prev, ok := byName[c]; ok && !(prev.entry == e && prev.list == l.name) {
+				return fmt.Errorf("%s %q and %s %q are the same command %q (cassette names ignore case and one .exe/.com/.bat/.cmd suffix)",
+					prev.list, prev.entry, l.name, e, c)
+			}
+			byName[c] = seen{e, l.name}
 		}
 	}
-	return out
+	return nil
 }
 
-// shimIdentity reports whether the executable at exe is a shim: it lives in
+// shimIdentity reports (with the shim's file name) whether the executable at exe is a shim: it lives in
 // <run-dir>/bin of a run dir made by 'xrr run'. Location, not name, decides,
 // so the real CLI works under any file name and a shimmed command may even
 // be called "xrr". It needs no environment, so shims survive `env -i`.
-func shimIdentity(exe, goos string) (runDir, name string, ok bool) {
+func shimIdentity(exe string) (runDir, file string, ok bool) {
 	dir := filepath.Dir(exe)
 	if filepath.Base(dir) != binSubdir {
 		return "", "", false
@@ -87,7 +101,7 @@ func shimIdentity(exe, goos string) (runDir, name string, ok bool) {
 	if fi, err := os.Stat(filepath.Join(runDir, configFile)); err != nil || fi.IsDir() {
 		return "", "", false
 	}
-	return runDir, canonName(filepath.Base(exe), goos), true
+	return runDir, filepath.Base(exe), true
 }
 
 // installShims creates one shim per name in binDir. The first is a hardlink
