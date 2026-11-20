@@ -11,7 +11,6 @@
 
 use std::time::Instant;
 
-use chrono::Utc;
 use serde_norway::{Mapping, Value};
 use sha2::{Digest, Sha256};
 
@@ -208,7 +207,7 @@ impl StreamRecording<'_> {
         let end = StreamEvent { seq: self.seq, at_ms: Some(self.elapsed_ms()) };
         self.seq += 1;
 
-        let recorded_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let recorded_at = crate::timestamp::now_rfc3339();
         let pair = StreamedPair {
             req: StreamedReq {
                 adapter: self.adapter_id.clone(),

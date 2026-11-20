@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use chrono::Utc;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::error::XrrError;
@@ -77,7 +76,7 @@ impl FileCassette {
         resp: &Resp,
         error: Option<&str>,
     ) -> Result<(), XrrError> {
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = crate::timestamp::now_rfc3339();
         self.write(adapter_id, fingerprint, "req", &now, req, None)?;
         self.write(adapter_id, fingerprint, "resp", &now, resp, error)?;
         Ok(())
