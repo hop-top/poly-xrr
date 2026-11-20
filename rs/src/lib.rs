@@ -8,6 +8,7 @@ pub mod stream;
 mod stream_fingerprint;
 pub mod stream_scrub;
 mod stream_session;
+mod timestamp;
 
 pub use cassette::FileCassette;
 pub use error::XrrError;
